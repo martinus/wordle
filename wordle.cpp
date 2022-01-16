@@ -86,7 +86,7 @@ constexpr std::array<char, NumCharacters> stateFromWord(std::string_view correct
     }
 
     for (int i = 0; i < NumCharacters; ++i) {
-        if (counts[guessWord[i]]) {
+        if (counts[guessWord[i]] && state[i] != '2') {
             state[i] = '1';
             --counts[guessWord[i]];
         }
@@ -121,6 +121,16 @@ static_assert(eq(stateFromWord("solar", "alaap"), std::array{'0', '1', '0', '2',
 static_assert(eq(stateFromWord("lilac", "mambo"), std::array{'0', '1', '0', '0', '0'}));
 static_assert(eq(stateFromWord("lilac", "stare"), std::array{'0', '0', '1', '0', '0'}));
 static_assert(eq(stateFromWord("lilac", "apian"), std::array{'0', '0', '1', '2', '0'}));
+
+static_assert(eq(stateFromWord("gouge", "raise"), std::array{'0', '0', '0', '0', '2'}));
+static_assert(eq(stateFromWord("gouge", "lento"), std::array{'0', '1', '0', '0', '1'}));
+static_assert(eq(stateFromWord("gouge", "bough"), std::array{'0', '2', '2', '2', '0'}));
+
+
+static_assert(eq(stateFromWord("jeans", "raise"), std::array{'0', '1', '0', '1', '1'}));
+static_assert(eq(stateFromWord("jeans", "knelt"), std::array{'0', '1', '1', '0', '0'}));
+static_assert(eq(stateFromWord("jeans", "ashen"), std::array{'1', '1', '0', '1', '1'}));
+
 
 template <typename Op>
 constexpr bool eachWord(std::string_view words, Op&& op) {
