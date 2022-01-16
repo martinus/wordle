@@ -7,6 +7,7 @@
 #include <set>
 #include <unordered_map>
 #include <unordered_set>
+#include <vector>
 
 static constexpr auto NumCharacters = 5;
 
@@ -257,9 +258,9 @@ void showWords(std::string_view words) {
     });
 }
 
-#if 1
-// Calculates a word's fitness:
-// For each word,
+#if 0
+// For each word to guess, calculate how well it can filter down the list of remaining words.
+// The more a guessing word reduces the number of correct words, the better.
 void evalWords(std::string_view wordsAllowed, std::string_view filteredWords, Preconditions const& pre) {
     auto fitnessBestWord = std::numeric_limits<size_t>::max();
 
@@ -295,14 +296,73 @@ void evalWords(std::string_view wordsAllowed, std::string_view filteredWords, Pr
 
 #else
 
-void evalWords(std::string_view wordsAllowed, std::string_view filteredWords, Preconditions const& pre) {
-    auto fitnessBestWord = std::numeric_limits<size_t>::max();
+enum WordState { maybe, trial };
+
+constexpr std::string_view toString(WordState ws) {
+    switch (ws) {
+    case WordState::maybe:
+        return "maybe";
+    case WordState::trial:
+        return "trial";
+    }
+    return "<unknown>";
+}
+
+struct Fitness {
+    size_t maxCount = 0;
+    size_t sum = 0;
+    WordState wordState = WordState::trial;
+
+    constexpr static Fitness worst() {
+        return {std::numeric_limits<size_t>::max(), std::numeric_limits<size_t>::max(), WordState::trial};
+    }
+    constexpr static Fitness best() {
+        return {0, 0, WordState::maybe};
+    }
+};
+
+constexpr bool operator<=(Fitness const& a, Fitness const& b) {
+    if (a.maxCount != b.maxCount) {
+        return a.maxCount <= b.maxCount;
+    }
+    if (a.sum != b.sum) {
+        return a.sum <= b.sum;
+    }
+    return a.wordState <= b.wordState;
+}
+
+constexpr bool operator>=(Fitness const& a, Fitness const& b) {
+    if (a.maxCount != b.maxCount) {
+        return a.maxCount >= b.maxCount;
+    }
+    if (a.sum != b.sum) {
+        return a.sum >= b.sum;
+    }
+    return a.wordState >= b.wordState;
+}
+
+constexpr bool operator==(Fitness const& a, Fitness const& b) {
+    return a.maxCount == b.maxCount && a.sum == b.sum && a.wordState == b.wordState;
+}
+
+constexpr bool operator!=(Fitness const& a, Fitness const& b) {
+    return !(a == b);
+}
+
+struct Results {
+    Fitness fitness{};
+    std::vector<std::string_view> words{};
+};
+
+Results evalWords(std::string_view wordsAllowed, std::string_view filteredWords, Preconditions const& pre) {
+    auto results = Results();
+    results.fitness = Fitness::worst();
 
     eachWord(wordsAllowed, [&](std::string_view guessWord) -> bool {
-        auto fitnessGuessWord = size_t();
-
+        auto fitnessGuessWord = Fitness{0, 0, WordState::trial};
         eachWord(filteredWords, [&](std::string_view correctWord) -> bool {
             if (correctWord == guessWord) {
+                fitnessGuessWord.wordState = WordState::maybe;
                 return true;
             }
 
@@ -316,16 +376,24 @@ void evalWords(std::string_view wordsAllowed, std::string_view filteredWords, Pr
                 ++count;
                 return true;
             });
-            fitnessGuessWord = std::max(fitnessGuessWord, count);
-            return fitnessGuessWord <= fitnessBestWord;
+            fitnessGuessWord.maxCount = std::max(fitnessGuessWord.maxCount, count);
+            fitnessGuessWord.sum += count * count;
+            return fitnessGuessWord <= results.fitness;
+            // return true;
         });
 
-        if (fitnessGuessWord <= fitnessBestWord) {
-            std::cout << fitnessGuessWord << " " << guessWord << std::endl;
-            fitnessBestWord = fitnessGuessWord;
+        // std::cout << fitnessGuessWord.maxCount << " " << fitnessGuessWord.sum << " " << guessWord << std::endl;
+
+        if (fitnessGuessWord <= results.fitness) {
+            if (fitnessGuessWord != results.fitness) {
+                results.words.clear();
+                results.fitness = fitnessGuessWord;
+            }
+            results.words.push_back(guessWord);
         }
         return true;
     });
+    return results;
 }
 #endif
 
@@ -349,5 +417,30 @@ int main(int argc, char** argv) {
     // showWords(filteredWords);
 
     // evaluate words.
-    evalWords(wordsAllowed, filteredCorrectWords, pre);
+    auto numPotentialWords = size_t();
+    eachWord(filteredCorrectWords, [&](std::string_view word) -> bool {
+        ++numPotentialWords;
+        return true;
+    });
+
+    auto results = evalWords(wordsAllowed, filteredCorrectWords, pre);
+
+    if (numPotentialWords == 1) {
+        std::cout << "The correct word is \"" << results.words.front() << "\"." << std::endl;
+    } else {
+        std::cout << numPotentialWords << " possible words. Choose "
+                  << (results.words.size() == 1 ? "this word" : "one of these words") << " to rule out at least "
+                  << (numPotentialWords - results.fitness.maxCount) << " ("
+                  << (100.0 * (numPotentialWords - results.fitness.maxCount) / numPotentialWords) << "%, "
+                  << results.fitness.maxCount << " remain) of these:";
+        auto prefix = " ";
+        for (auto const& word : results.words) {
+            std::cout << prefix << '"' << word << '"';
+            prefix = ", ";
+        }
+
+        std::cout << std::endl;
+    }
+
+    std::cout << "wordState=" << toString(results.fitness.wordState) << std::endl;
 }
