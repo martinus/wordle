@@ -1,5 +1,7 @@
+#include <algorithm> // find
 #include <array>
 #include <cmath>
+#include <cstring> // memcpy
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -69,15 +71,27 @@ std::string readAndFilterDictionary(std::filesystem::path filename) {
 
 constexpr std::array<char, NumCharacters> stateFromWord(std::string_view correctWord, std::string_view guessWord) {
     auto state = std::array<char, NumCharacters>();
+    auto counts = std::array<uint8_t, 256>();
+    for (auto ch : correctWord) {
+        ++counts[ch];
+    }
+
     for (int i = 0; i < NumCharacters; ++i) {
         state[i] = '0';
         if (guessWord[i] == correctWord[i]) {
             // got the correct letter!
             state[i] = '2';
-        } else if (std::string_view::npos != correctWord.find(guessWord[i])) {
-            state[i] = '1';
+            --counts[guessWord[i]];
         }
     }
+
+    for (int i = 0; i < NumCharacters; ++i) {
+        if (counts[guessWord[i]]) {
+            state[i] = '1';
+            --counts[guessWord[i]];
+        }
+    }
+
     return state;
 }
 
@@ -94,6 +108,19 @@ constexpr bool eq(std::array<T, N> const& a, std::array<T, N> const& b) {
 static_assert(eq(stateFromWord("panic", "chase"), std::array{'1', '0', '1', '0', '0'}));
 static_assert(eq(stateFromWord("panic", "rocky"), std::array{'0', '0', '1', '0', '0'}));
 static_assert(eq(stateFromWord("panic", "magic"), std::array{'0', '2', '0', '2', '2'}));
+static_assert(eq(stateFromWord("abcde", "xaaxx"), std::array{'0', '1', '0', '0', '0'}));
+static_assert(eq(stateFromWord("abcde", "aaxxx"), std::array{'2', '0', '0', '0', '0'}));
+static_assert(eq(stateFromWord("aacde", "aaxxx"), std::array{'2', '2', '0', '0', '0'}));
+static_assert(eq(stateFromWord("aacde", "aaaxx"), std::array{'2', '2', '0', '0', '0'}));
+static_assert(eq(stateFromWord("shark", "zanza"), std::array{'0', '1', '0', '0', '0'}));
+static_assert(eq(stateFromWord("solar", "raise"), std::array{'1', '1', '0', '1', '0'}));
+static_assert(eq(stateFromWord("solar", "abaca"), std::array{'1', '0', '0', '0', '0'}));
+static_assert(eq(stateFromWord("solar", "alaap"), std::array{'0', '1', '0', '2', '0'}));
+static_assert(eq(stateFromWord("solar", "alaap"), std::array{'0', '1', '0', '2', '0'}));
+
+static_assert(eq(stateFromWord("lilac", "mambo"), std::array{'0', '1', '0', '0', '0'}));
+static_assert(eq(stateFromWord("lilac", "stare"), std::array{'0', '0', '1', '0', '0'}));
+static_assert(eq(stateFromWord("lilac", "apian"), std::array{'0', '0', '1', '2', '0'}));
 
 template <typename Op>
 constexpr bool eachWord(std::string_view words, Op&& op) {
@@ -111,8 +138,8 @@ constexpr bool eachWord(std::string_view words, Op&& op) {
 // create set of characters that need to be there
 class Preconditions {
     std::array<std::array<bool, 256>, NumCharacters> m_allowedChars{};
-    std::array<bool, 256> m_mandatoryChars{};
-    int m_numMandatoryLetters{};
+    std::array<uint8_t, 256> m_mandatoryCharCount{};
+    std::string m_mandatoryCharsForSearch{};
 
 public:
     Preconditions(int argc, char** argv) {
@@ -139,20 +166,32 @@ public:
     }
 
     void addWordAndState(std::string_view word, std::string_view state) {
+        // std::cout << "addWordAndState: " << word << " " << state << ", mandatory=" << m_mandatoryCharsForSearch;
+        std::array<bool, 256> earlierOne{};
         for (size_t charIdx = 0; charIdx < NumCharacters; ++charIdx) {
+            // correct=shark, guess=zanza, state=01000
             if ('0' == state[charIdx]) {
-                // letter word[i] doesn't exist, not allowed at any place
-                for (auto& ac : m_allowedChars) {
-                    ac[word[charIdx]] = false;
+                if (earlierOne[word[charIdx]]) {
+                    // can only set this to false, an earlier of that char could be somewhere else
+                    m_allowedChars[charIdx][word[charIdx]] = false;
+                } else {
+                    // only when that caracter is *not* anywhere else in the word,
+                    // letter word[i] doesn't exist, not allowed at any place
+                    for (auto& ac : m_allowedChars) {
+                        ac[word[charIdx]] = false;
+                    }
                 }
+            } else if ('1' == state[charIdx]) {
+                earlierOne[word[charIdx]] = true;
             }
         }
 
+        auto newMandatoryChars = std::array<uint8_t, 256>{};
         for (size_t charIdx = 0; charIdx < NumCharacters; ++charIdx) {
             if ('1' == state[charIdx]) {
                 // letter word[i] exists, but not at this place
                 m_allowedChars[charIdx][word[charIdx]] = false;
-                m_mandatoryChars[word[charIdx]] = true;
+                ++newMandatoryChars[word[charIdx]];
             }
         }
 
@@ -163,18 +202,19 @@ public:
                 // letter found!
                 m_allowedChars[charIdx] = {};
                 m_allowedChars[charIdx][word[charIdx]] = true;
-                // no need to set mandatory chars here, this is already checked
-                // m_mandatoryChars[ch] = true;
+                ++newMandatoryChars[word[charIdx]];
             }
         }
 
-        // update mandatory letters count
-        m_numMandatoryLetters = 0;
-        for (auto m : m_mandatoryChars) {
-            if (m) {
-                ++m_numMandatoryLetters;
+        // now merge newMandatoryChars with the old ones, and build the string for search
+        m_mandatoryCharsForSearch.clear();
+        for (char ch = 'a'; ch <= 'z'; ++ch) {
+            m_mandatoryCharCount[ch] = std::max(m_mandatoryCharCount[ch], newMandatoryChars[ch]);
+            for (uint8_t i = 0; i < m_mandatoryCharCount[ch]; ++i) {
+                m_mandatoryCharsForSearch += ch;
             }
         }
+        // std::cout << " mandatory after=" << m_mandatoryCharsForSearch << std::endl;
     }
 
     void debugPrint() const {
@@ -200,15 +240,7 @@ public:
         for (char ch = 'a'; ch <= 'z'; ++ch) {
             std::cout << '-';
         }
-        std::cout << std::endl;
-        for (char ch = 'a'; ch <= 'z'; ++ch) {
-            if (m_mandatoryChars[ch]) {
-                std::cout << ch;
-            } else {
-                std::cout << "#";
-            }
-        }
-        std::cout << " " << m_numMandatoryLetters << std::endl;
+        std::cout << " " << m_mandatoryCharsForSearch << std::endl;
     }
 
     std::string validWords(std::string_view allWords) const {
@@ -224,6 +256,7 @@ public:
     template <typename Op>
     bool eachValidWord(std::string_view allWords, Op&& op) const {
         return eachWord(allWords, [&](std::string_view word) -> bool {
+            // check allowed characters
             for (int i = 0; i < NumCharacters; ++i) {
                 if (!m_allowedChars[i][word[i]]) {
                     // word not allowed, continue with next word
@@ -231,19 +264,17 @@ public:
                 }
             }
 
-            // now check that each mandatory letter is actually used
-            auto setLetters = std::array<bool, 'z' - 'a' + 1>{};
-            auto numMandatoryLetters = 0;
-            for (auto ch : word) {
-                auto idx = ch - 'a';
-                if (!setLetters[idx] && m_mandatoryChars[ch]) {
-                    setLetters[idx] = true;
-                    ++numMandatoryLetters;
+            // check that each mandatory letter is used
+            std::array<char, NumCharacters> w;
+            std::memcpy(w.data(), word.data(), NumCharacters);
+            for (auto mandatoryChar : m_mandatoryCharsForSearch) {
+                if (auto it = std::find(w.begin(), w.end(), mandatoryChar); it != w.end()) {
+                    // set to 0 so it won't be can't be found again, in case of the same 2 letters
+                    *it = '_';
+                } else {
+                    // mandatory char not present, continue with next word
+                    return true;
                 }
-            }
-            if (numMandatoryLetters != m_numMandatoryLetters) {
-                // std::cout << word << " " << numMandatoryLetters << " " << m_numMandatoryLetters << std::endl;
-                return true;
             }
 
             return op(word);
@@ -252,10 +283,13 @@ public:
 };
 
 void showWords(std::string_view words) {
-    eachWord(words, [](std::string_view word) -> bool {
-        std::cout << word << std::endl;
+    auto prefix = "";
+    eachWord(words, [&](std::string_view word) -> bool {
+        std::cout << prefix << word;
+        prefix = " ";
         return true;
     });
+    std::cout << std::endl;
 }
 
 #if 0
@@ -372,18 +406,24 @@ Results evalWords(std::string_view wordsAllowed, std::string_view filteredWords,
 
             // count number of possible matches - the less the better
             auto count = size_t();
-            auto ret = preCopy.eachValidWord(filteredWords, [&](std::string_view word) -> bool {
+            auto ret = preCopy.eachValidWord(filteredWords, [&](std::string_view validWord) -> bool {
+                // std::cout << "guess=" << guessWord << ", correct=" << correctWord << ", valid=" << validWord << std::endl;
                 ++count;
                 return true;
             });
+            // std::cout << "guessWord=" << guessWord << ", count=" << count << std::endl;
             fitnessGuessWord.maxCount = std::max(fitnessGuessWord.maxCount, count);
             fitnessGuessWord.sum += count * count;
             return fitnessGuessWord <= results.fitness;
             // return true;
         });
+        // showWords(filteredWords);
+        /*
+                std::cout << fitnessGuessWord.maxCount << " " << fitnessGuessWord.sum << " " <<
+           toString(fitnessGuessWord.wordState)
+                          << ": " << guessWord << std::endl;
 
-        // std::cout << fitnessGuessWord.maxCount << " " << fitnessGuessWord.sum << " " << guessWord << std::endl;
-
+        */
         if (fitnessGuessWord <= results.fitness) {
             if (fitnessGuessWord != results.fitness) {
                 results.words.clear();
@@ -428,8 +468,10 @@ int main(int argc, char** argv) {
     if (numPotentialWords == 1) {
         std::cout << "The correct word is \"" << results.words.front() << "\"." << std::endl;
     } else {
-        std::cout << numPotentialWords << " possible words. Choose "
-                  << (results.words.size() == 1 ? "this word" : "one of these words") << " to rule out at least "
+        // showWords(filteredCorrectWords);
+        std::cout << numPotentialWords << " possible words. "
+                  << (results.fitness.wordState == WordState::maybe ? "Try " : "Limit down with ")
+                  << (results.words.size() == 1 ? "this word" : "one of these") << " to rule out at least "
                   << (numPotentialWords - results.fitness.maxCount) << " ("
                   << (100.0 * (numPotentialWords - results.fitness.maxCount) / numPotentialWords) << "%, "
                   << results.fitness.maxCount << " remain) of these:";
@@ -442,5 +484,5 @@ int main(int argc, char** argv) {
         std::cout << std::endl;
     }
 
-    std::cout << "wordState=" << toString(results.fitness.wordState) << std::endl;
+    // std::cout << "wordState=" << toString(results.fitness.wordState) << std::endl;
 }
