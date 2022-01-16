@@ -1,8 +1,12 @@
 #include <array>
+#include <cmath>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <limits>
 #include <set>
+#include <unordered_map>
+#include <unordered_set>
 
 static constexpr auto NumCharacters = 5;
 
@@ -62,9 +66,48 @@ std::string readAndFilterDictionary(std::filesystem::path filename) {
     return words;
 }
 
+constexpr std::array<char, NumCharacters> stateFromWord(std::string_view correctWord, std::string_view guessWord) {
+    auto state = std::array<char, NumCharacters>();
+    for (int i = 0; i < NumCharacters; ++i) {
+        state[i] = '0';
+        if (guessWord[i] == correctWord[i]) {
+            // got the correct letter!
+            state[i] = '2';
+        } else if (std::string_view::npos != correctWord.find(guessWord[i])) {
+            state[i] = '1';
+        }
+    }
+    return state;
+}
+
+template <typename T, size_t N>
+constexpr bool eq(std::array<T, N> const& a, std::array<T, N> const& b) {
+    for (size_t i = 0; i < N; ++i) {
+        if (a[i] != b[i]) {
+            return false;
+        }
+    }
+    return true;
+}
+
+static_assert(eq(stateFromWord("panic", "chase"), std::array{'1', '0', '1', '0', '0'}));
+static_assert(eq(stateFromWord("panic", "rocky"), std::array{'0', '0', '1', '0', '0'}));
+static_assert(eq(stateFromWord("panic", "magic"), std::array{'0', '2', '0', '2', '2'}));
+
+template <typename Op>
+constexpr bool eachWord(std::string_view words, Op&& op) {
+    while (!words.empty()) {
+        auto word = words.substr(0, NumCharacters);
+        if (!op(word)) {
+            return false;
+        }
+        words = words.substr(NumCharacters);
+    }
+    return true;
+}
+
 // for each spot check which letters are still allowed
 // create set of characters that need to be there
-
 class Preconditions {
     std::array<std::array<bool, 256>, NumCharacters> m_allowedChars{};
     std::array<bool, 256> m_mandatoryChars{};
@@ -91,7 +134,10 @@ public:
 
         auto word = std::string_view(wordAndState.data(), NumCharacters);
         auto state = std::string_view(wordAndState.data() + NumCharacters, NumCharacters);
+        addWordAndState(word, state);
+    }
 
+    void addWordAndState(std::string_view word, std::string_view state) {
         for (size_t charIdx = 0; charIdx < NumCharacters; ++charIdx) {
             if ('0' == state[charIdx]) {
                 // letter word[i] doesn't exist, not allowed at any place
@@ -164,92 +210,144 @@ public:
         std::cout << " " << m_numMandatoryLetters << std::endl;
     }
 
-    // walks through all words and creates a list of ones that could match
     std::string validWords(std::string_view allWords) const {
         auto filtered = std::string();
-        while (!allWords.empty()) {
-            auto word = allWords.substr(0, NumCharacters);
-            allWords = allWords.substr(NumCharacters);
+        eachValidWord(allWords, [&](std::string_view validWord) -> bool {
+            filtered += validWord;
+            return true;
+        });
+        return filtered;
+    }
 
-            auto isWordAllowed = true;
+    // walks through all words and creates a list of ones that could match
+    template <typename Op>
+    bool eachValidWord(std::string_view allWords, Op&& op) const {
+        return eachWord(allWords, [&](std::string_view word) -> bool {
             for (int i = 0; i < NumCharacters; ++i) {
                 if (!m_allowedChars[i][word[i]]) {
-                    isWordAllowed = false;
-                    continue;
+                    // word not allowed, continue with next word
+                    return true;
                 }
-            }
-            if (!isWordAllowed) {
-                continue;
             }
 
             // now check that each mandatory letter is actually used
-            auto setLetters = std::array<bool, 256>{};
+            auto setLetters = std::array<bool, 'z' - 'a' + 1>{};
             auto numMandatoryLetters = 0;
             for (auto ch : word) {
-                if (!setLetters[ch] && m_mandatoryChars[ch]) {
-                    setLetters[ch] = true;
+                auto idx = ch - 'a';
+                if (!setLetters[idx] && m_mandatoryChars[ch]) {
+                    setLetters[idx] = true;
                     ++numMandatoryLetters;
                 }
-                setLetters[ch] = true;
             }
             if (numMandatoryLetters != m_numMandatoryLetters) {
-
-                std::cout << word << " " << numMandatoryLetters << " " << m_numMandatoryLetters << std::endl;
-                continue;
+                // std::cout << word << " " << numMandatoryLetters << " " << m_numMandatoryLetters << std::endl;
+                return true;
             }
 
-            filtered += word;
-        }
-        return filtered;
+            return op(word);
+        });
     }
 };
 
-template <typename Op>
-void eachWord(std::string_view words, Op&& op) {
-    while (!words.empty()) {
-        auto word = words.substr(0, NumCharacters);
-        op(word);
-        words = words.substr(NumCharacters);
-    }
-}
-
 void showWords(std::string_view words) {
-    eachWord(words, [](std::string_view word) {
+    eachWord(words, [](std::string_view word) -> bool {
         std::cout << word << std::endl;
+        return true;
     });
 }
 
-void evalWords(std::string_view words, Preconditions const& pre) {
-    eachWord(words, [&](std::string_view winingWord) {
-        eachWord(words, [&](std::string_view trialWord) {
-            std::cout << winingWord << " " << trialWord << std::endl;
+#if 1
+// Calculates a word's fitness:
+// For each word,
+void evalWords(std::string_view wordsAllowed, std::string_view filteredWords, Preconditions const& pre) {
+    auto fitnessBestWord = std::numeric_limits<size_t>::max();
+
+    eachWord(wordsAllowed, [&](std::string_view guessWord) -> bool {
+        auto fitnessGuessWord = size_t();
+
+        eachWord(filteredWords, [&](std::string_view correctWord) -> bool {
+            if (correctWord == guessWord) {
+                return true;
+            }
+
+            auto preCopy = pre;
+            auto state = stateFromWord(correctWord, guessWord);
+            preCopy.addWordAndState(guessWord, std::string_view(state.data(), state.size()));
+
+            // count number of possible matches - the less the better
+            auto sum = size_t();
+            auto ret = preCopy.eachValidWord(filteredWords, [&](std::string_view word) -> bool {
+                ++sum;
+                return fitnessGuessWord + sum * sum <= fitnessBestWord;
+            });
+            fitnessGuessWord += sum * sum;
+            return ret;
         });
+
+        if (fitnessGuessWord <= fitnessBestWord) {
+            std::cout << fitnessGuessWord << " " << guessWord << std::endl;
+            fitnessBestWord = fitnessGuessWord;
+        }
+        return true;
     });
 }
 
-// Usage e.g. ./wordle weary00102 yelps10000 zones00200
+#else
+
+void evalWords(std::string_view wordsAllowed, std::string_view filteredWords, Preconditions const& pre) {
+    auto fitnessBestWord = std::numeric_limits<size_t>::max();
+
+    eachWord(wordsAllowed, [&](std::string_view guessWord) -> bool {
+        auto fitnessGuessWord = size_t();
+
+        eachWord(filteredWords, [&](std::string_view correctWord) -> bool {
+            if (correctWord == guessWord) {
+                return true;
+            }
+
+            auto preCopy = pre;
+            auto state = stateFromWord(correctWord, guessWord);
+            preCopy.addWordAndState(guessWord, std::string_view(state.data(), state.size()));
+
+            // count number of possible matches - the less the better
+            auto count = size_t();
+            auto ret = preCopy.eachValidWord(filteredWords, [&](std::string_view word) -> bool {
+                ++count;
+                return true;
+            });
+            fitnessGuessWord = std::max(fitnessGuessWord, count);
+            return fitnessGuessWord <= fitnessBestWord;
+        });
+
+        if (fitnessGuessWord <= fitnessBestWord) {
+            std::cout << fitnessGuessWord << " " << guessWord << std::endl;
+            fitnessBestWord = fitnessGuessWord;
+        }
+        return true;
+    });
+}
+#endif
+
+// Usage e.g. ./wordle en weary00102 yelps10000 zones00200
 //  0: letter doesnt exist
 //  1: letter exists, but wrong position
 //  2: letter is in correct spot!
 
-// e.g. ./wordle dfhjkc .an.y
-//  letters d, f, h, j, c are *not in the word.
-//  letters an and y are in the right splot, the dot's are still missing.
-//
-// start with
-//  ./wordle .....
-
 int main(int argc, char** argv) {
     // read & filter dictionary
-    auto words = readAndFilterDictionary("/usr/share/dict/american-english");
+    auto language = std::string(argv[1]);
 
-    auto pre = Preconditions(argc, argv);
+    auto wordsAllowed = readAndFilterDictionary("words_" + language + "_allowed.txt");
+    auto wordsCorrect = readAndFilterDictionary("words_" + language + "_correct.txt");
 
-    pre.debugPrint();
+    auto pre = Preconditions(argc - 1, argv + 1);
 
-    auto filteredWords = pre.validWords(words);
-    showWords(filteredWords);
+    // pre.debugPrint();
+
+    auto filteredCorrectWords = pre.validWords(wordsCorrect);
+    // showWords(filteredWords);
 
     // evaluate words.
-    // evalWords(filteredWords);
+    evalWords(wordsAllowed, filteredCorrectWords, pre);
 }
