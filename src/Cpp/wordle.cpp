@@ -494,7 +494,7 @@ Examples:
         Loads english dictionaries, and give two guesses. Each guess consists of the word followed by
         the state for each letter, based on the color output of https://www.powerlanguage.co.uk/wordle/.
 
-        0: letter doesnt exist (e.g. 'w', 'e', 'r' for weary00102)
+        0: letter does not exist (e.g. 'w', 'e', 'r' for weary00102)
         1: letter exists but wrong position (e.g. 'a' for weary00102)
         2: letter is in correct spot (e.g. 'y' for weary00102)
 
