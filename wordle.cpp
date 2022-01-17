@@ -135,19 +135,13 @@ public:
     /**
      * @brief Iterates the given list of words, and calls op with each word.
      *
-     * Stops iterating when op returns true.
-     *
-     * @tparam Op
-     * @param words
-     * @param op
-     * @return true
-     * @return false
+     * Stops iterating when op returns true. For convenience, op can also be a void() function.
+     * @return True when op() always returned true (or when op is void), otherwise false.
      */
     template <typename Op>
     constexpr bool each(Op&& op) const {
-        auto words = std::string_view(m_words);
-        while (!words.empty()) {
-            auto word = words.substr(0, NumCharacters);
+        for (size_t idx = 0; idx < m_words.size(); idx += NumCharacters) {
+            auto word = std::string_view(m_words.data() + idx, NumCharacters);
 
             // when op returns a bool, use a false result to bail out.
             if constexpr (std::is_same_v<bool, std::invoke_result_t<Op, std::string_view>>) {
@@ -157,7 +151,6 @@ public:
             } else {
                 op(word);
             }
-            words = words.substr(NumCharacters);
         }
         return true;
     }
