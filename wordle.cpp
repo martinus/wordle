@@ -1,15 +1,12 @@
-#include <algorithm> // find
+#include <algorithm>
 #include <array>
-#include <cmath>
 #include <cstring> // memcpy
 #include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <limits>
 #include <set>
-#include <unordered_map>
-#include <unordered_set>
-#include <vector>
+#include <string>
 
 namespace wordle {
 
