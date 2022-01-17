@@ -144,12 +144,12 @@ public:
             auto word = std::string_view(m_words.data() + idx, NumCharacters);
 
             // when op returns a bool, use a false result to bail out.
-            if constexpr (std::is_same_v<bool, std::invoke_result_t<Op, std::string_view>>) {
+            if constexpr (std::is_same_v<void, std::invoke_result_t<Op, std::string_view>>) {
+                op(word);
+            } else {
                 if (!op(word)) {
                     return false;
                 }
-            } else {
-                op(word);
             }
         }
         return true;
@@ -166,20 +166,21 @@ public:
 /**
  * @brief Fast map from alphabet 'a'..'z' to a value
  *
- * Since the number of possible values is very small (and fixed, this can be optimized well.
- *
+ * Since the number of possible values is very small (and fixed), this can be optimized well.
  */
 template <typename Mapped>
 class AlphabetMap {
-    std::array<Mapped, 256> m_data{};
+    std::array<Mapped, 'z' - 'a' + 1> m_data{};
 
 public:
     constexpr Mapped& operator[](char ch) {
-        return m_data[ch];
+        // no out of bounds check because this has to be very fast
+        return m_data[ch - 'a'];
     }
 
     constexpr Mapped const& operator[](char ch) const {
-        return m_data[ch];
+        // no out of bounds check because this has to be very fast
+        return m_data[ch - 'a'];
     }
 };
 
@@ -192,16 +193,12 @@ class Preconditions {
     std::string m_mandatoryCharsForSearch{};
 
 public:
-    Preconditions(int argc, char** argv) {
+    Preconditions() {
         // initially, all letters are allowed
         for (char ch = 'a'; ch <= 'z'; ++ch) {
             for (auto& ac : m_allowedCharPerLetter) {
                 ac[ch] = true;
             }
-        }
-
-        for (int i = 1; i < argc; ++i) {
-            addWordAndState(argv[i]);
         }
     }
 
@@ -217,7 +214,7 @@ public:
 
     void addWordAndState(std::string_view word, std::string_view state) {
         // std::cout << "addWordAndState: " << word << " " << state << ", mandatory=" << m_mandatoryCharsForSearch;
-        std::array<bool, 256> earlierOne{};
+        auto earlierOne = AlphabetMap<bool>();
         for (size_t charIdx = 0; charIdx < NumCharacters; ++charIdx) {
             // correct=shark, guess=zanza, state=01000
             if ('0' == state[charIdx]) {
@@ -225,7 +222,7 @@ public:
                     // can only set this to false, an earlier of that char could be somewhere else
                     m_allowedCharPerLetter[charIdx][word[charIdx]] = false;
                 } else {
-                    // only when that caracter is *not* anywhere else in the word,
+                    // only when that character is *not* anywhere else in the word,
                     // letter word[i] doesn't exist, not allowed at any place
                     for (auto& ac : m_allowedCharPerLetter) {
                         ac[word[charIdx]] = false;
@@ -236,7 +233,7 @@ public:
             }
         }
 
-        auto newMandatoryChars = std::array<uint8_t, 256>{};
+        auto newMandatoryChars = AlphabetMap<uint8_t>();
         for (size_t charIdx = 0; charIdx < NumCharacters; ++charIdx) {
             if ('1' == state[charIdx]) {
                 // letter word[i] exists, but not at this place
@@ -302,7 +299,11 @@ public:
         return Words(std::move(filtered));
     }
 
-    // walks through all words and creates a list of ones that could match
+    /**
+     * @brief Walks through all words and creates a list of ones that could match.
+     *
+     * This is highly performance critical!
+     */
     template <typename Op>
     bool eachValidWord(Words const& allWords, Op&& op) const {
         return allWords.each([&](std::string_view word) -> bool {
@@ -317,17 +318,24 @@ public:
             // check that each mandatory letter is used
             std::array<char, NumCharacters> w;
             std::memcpy(w.data(), word.data(), NumCharacters);
+
             for (auto mandatoryChar : m_mandatoryCharsForSearch) {
                 if (auto it = std::find(w.begin(), w.end(), mandatoryChar); it != w.end()) {
                     // set to 0 so it won't be can't be found again, in case of the same 2 letters
-                    *it = '_';
+                    *it = 0;
                 } else {
                     // mandatory char not present, continue with next word
                     return true;
                 }
             }
 
-            return op(word);
+            // convenience: when op returns bool use this, otherwise just call it
+            if constexpr (std::is_same_v<void, std::invoke_result_t<Op, std::string_view>>) {
+                op(word);
+                return true;
+            } else {
+                return op(word);
+            }
         });
     }
 };
@@ -417,11 +425,11 @@ Results evalWords(Words const& wordsAllowed, Words const& filteredWords, Precond
 
             // count number of possible matches - the less the better
             auto count = size_t();
-            auto ret = preCopy.eachValidWord(filteredWords, [&](std::string_view validWord) -> bool {
+            preCopy.eachValidWord(filteredWords, [&](std::string_view validWord) {
                 // std::cout << "guess=" << guessWord << ", correct=" << correctWord << ", valid=" << validWord << std::endl;
                 ++count;
-                return true;
             });
+
             // std::cout << "guessWord=" << guessWord << ", count=" << count << std::endl;
             fitnessGuessWord.maxCount = std::max(fitnessGuessWord.maxCount, count);
             fitnessGuessWord.sum += count * count;
@@ -461,7 +469,11 @@ int main(int argc, char** argv) {
     auto wordsAllowed = wordle::Words(wordle::readAndFilterDictionary("words_" + language + "_allowed.txt"));
     auto wordsCorrect = wordle::Words(wordle::readAndFilterDictionary("words_" + language + "_correct.txt"));
 
-    auto pre = wordle::Preconditions(argc - 1, argv + 1);
+    auto pre = wordle::Preconditions();
+
+    for (int i = 2; i < argc; ++i) {
+        pre.addWordAndState(argv[i]);
+    }
 
     // pre.debugPrint();
 
