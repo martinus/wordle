@@ -83,12 +83,15 @@ constexpr std::array<char, NumCharacters> stateFromWord(std::string_view correct
  */
 std::string readAndFilterDictionary(std::filesystem::path filename) {
     auto fin = std::ifstream(filename);
+    if (!fin.is_open()) {
+        throw std::runtime_error("Could not open " + filename.string());
+    }
     auto words = std::string();
     auto word = std::string();
 
     // std::set so it's unique and sorted
     auto uniqueWords = std::set<std::string>();
-    while (std::getline(fin, word)) {
+    while (fin >> word) {
         if (word.size() != NumCharacters) {
             continue;
         }
@@ -479,14 +482,15 @@ int main(int argc, char** argv) {
     if (argc == 1) {
         std::cout << R"(This is a wordle solver, written to assist in https://www.powerlanguage.co.uk/wordle/
 
-Usage: ./wordle <language> [word-state]...
+Usage: ./wordle <prefix> [word-state]...
 
 Examples:
 
-    ./wordle en
-        Loads english dictionaries, and calculates the best starting word(s). This can take a while!
+    ./wordle dictionaries/en
+        Loads dictionaries/en_allowed.txt and dictionaries/en_correct.txt, and calculates the best
+        starting word(s). This can take a while!
 
-    ./wordle en weary00102 yelps10000
+    ./wordle dictionaries/en weary00102 yelps10000
         Loads english dictionaries, and give two guesses. Each guess consists of the word followed by
         the state for each letter, based on the color output of https://www.powerlanguage.co.uk/wordle/.
 
@@ -503,10 +507,10 @@ by Martin Leitner-Ankerl 2022
         exit(1);
     }
     // read & filter dictionary
-    auto language = std::string(argv[1]);
+    auto prefix = std::string(argv[1]);
 
-    auto allowedWords = wordle::Words(wordle::readAndFilterDictionary("words_" + language + "_allowed.txt"));
-    auto wordsCorrect = wordle::Words(wordle::readAndFilterDictionary("words_" + language + "_correct.txt"));
+    auto allowedWords = wordle::Words(wordle::readAndFilterDictionary(prefix + "_allowed.txt"));
+    auto wordsCorrect = wordle::Words(wordle::readAndFilterDictionary(prefix + "_correct.txt"));
 
     auto pre = wordle::Preconditions();
 
