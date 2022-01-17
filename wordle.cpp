@@ -125,7 +125,7 @@ std::string readAndFilterDictionary(std::filesystem::path filename) {
  * TODO don't use a global constant for word length
  */
 class Words {
-    // All words
+    // All words, without separator
     std::string m_words{};
 
 public:
@@ -133,7 +133,7 @@ public:
         : m_words(std::move(words)) {}
 
     /**
-     * @brief Iterates the given list of words, and calls op with each word.
+     * @brief Iterates all words and calls op with each word.
      *
      * Stops iterating when op returns true. For convenience, op can also be a void() function.
      * @return True when op() always returned true (or when op is void), otherwise false.
@@ -161,14 +161,25 @@ public:
     size_t size() const {
         return m_words.size() / NumCharacters;
     }
+};
 
-    /**
-     * @brief Gets the actual words.
-     *
-     * TODO get rid of this, as this exposes internals
-     */
-    std::string_view words() const {
-        return m_words;
+/**
+ * @brief Fast map from alphabet 'a'..'z' to a value
+ *
+ * Since the number of possible values is very small (and fixed, this can be optimized well.
+ *
+ */
+template <typename Mapped>
+class AlphabetMap {
+    std::array<Mapped, 256> m_data{};
+
+public:
+    constexpr Mapped& operator[](char ch) {
+        return m_data[ch];
+    }
+
+    constexpr Mapped const& operator[](char ch) const {
+        return m_data[ch];
     }
 };
 
@@ -176,15 +187,15 @@ public:
 // create set of characters that need to be there
 
 class Preconditions {
-    std::array<std::array<bool, 256>, NumCharacters> m_allowedChars{};
-    std::array<uint8_t, 256> m_mandatoryCharCount{};
+    std::array<AlphabetMap<bool>, NumCharacters> m_allowedCharPerLetter{};
+    AlphabetMap<uint8_t> m_mandatoryCharCount{};
     std::string m_mandatoryCharsForSearch{};
 
 public:
     Preconditions(int argc, char** argv) {
         // initially, all letters are allowed
         for (char ch = 'a'; ch <= 'z'; ++ch) {
-            for (auto& ac : m_allowedChars) {
+            for (auto& ac : m_allowedCharPerLetter) {
                 ac[ch] = true;
             }
         }
@@ -212,11 +223,11 @@ public:
             if ('0' == state[charIdx]) {
                 if (earlierOne[word[charIdx]]) {
                     // can only set this to false, an earlier of that char could be somewhere else
-                    m_allowedChars[charIdx][word[charIdx]] = false;
+                    m_allowedCharPerLetter[charIdx][word[charIdx]] = false;
                 } else {
                     // only when that caracter is *not* anywhere else in the word,
                     // letter word[i] doesn't exist, not allowed at any place
-                    for (auto& ac : m_allowedChars) {
+                    for (auto& ac : m_allowedCharPerLetter) {
                         ac[word[charIdx]] = false;
                     }
                 }
@@ -229,7 +240,7 @@ public:
         for (size_t charIdx = 0; charIdx < NumCharacters; ++charIdx) {
             if ('1' == state[charIdx]) {
                 // letter word[i] exists, but not at this place
-                m_allowedChars[charIdx][word[charIdx]] = false;
+                m_allowedCharPerLetter[charIdx][word[charIdx]] = false;
                 ++newMandatoryChars[word[charIdx]];
             }
         }
@@ -239,8 +250,8 @@ public:
         for (size_t charIdx = 0; charIdx < NumCharacters; ++charIdx) {
             if ('2' == state[charIdx]) {
                 // letter found!
-                m_allowedChars[charIdx] = {};
-                m_allowedChars[charIdx][word[charIdx]] = true;
+                m_allowedCharPerLetter[charIdx] = {};
+                m_allowedCharPerLetter[charIdx][word[charIdx]] = true;
                 ++newMandatoryChars[word[charIdx]];
             }
         }
@@ -268,7 +279,7 @@ public:
 
         for (int i = 0; i < NumCharacters; ++i) {
             for (char ch = 'a'; ch <= 'z'; ++ch) {
-                if (m_allowedChars[i][ch]) {
+                if (m_allowedCharPerLetter[i][ch]) {
                     std::cout << ch;
                 } else {
                     std::cout << ".";
@@ -297,7 +308,7 @@ public:
         return allWords.each([&](std::string_view word) -> bool {
             // check allowed characters
             for (int i = 0; i < NumCharacters; ++i) {
-                if (!m_allowedChars[i][word[i]]) {
+                if (!m_allowedCharPerLetter[i][word[i]]) {
                     // word not allowed, continue with next word
                     return true;
                 }
