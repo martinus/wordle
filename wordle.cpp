@@ -346,73 +346,94 @@ void showWords(Words const& words) {
     std::cout << std::endl;
 }
 
-enum WordState { maybe, trial };
+enum WordState { partOfCorrectWords, notPartOfCorrectWords };
 
 constexpr std::string_view toString(WordState ws) {
     switch (ws) {
-    case WordState::maybe:
-        return "maybe";
-    case WordState::trial:
-        return "trial";
+    case WordState::partOfCorrectWords:
+        return "part of correct words";
+    case WordState::notPartOfCorrectWords:
+        return "not part of correct words";
     }
     return "<unknown>";
 }
 
+/**
+ * @brief Fitness score of a guess word. The lower, the better.
+ */
 struct Fitness {
+    /**
+     * Maximum number of remaining words that will remain when using this guessing word. This is evaluated against all words
+     * that can possibly be correct. This is the most important metric, because we want to optimize for the worst case to
+     * guarantee that we can reduce the set of possible words as much as possible.
+     */
     size_t maxCount = 0;
-    size_t sum = 0;
-    WordState wordState = WordState::trial;
+
+    /**
+     * Quadratic error of the number of remaining words. The lower the better, but first we optimize
+     * against the maximum. So when several words lead to the same maximum number of remaining words, we prefer the one where
+     * the sum of count^2 is minimum.
+     *
+     * NOTE: My gut says this is a reasonable heuristic, but I have nothing to prove this.
+     */
+    size_t sumCountSquared = 0;
+
+    /**
+     * Words can be either trial words (that are guaranteed not to be the correct words). Even though these words can be used
+     * to limit down the number of possibilities, they certainly won't match. So all other things being equal, we prefer words
+     * that are in the set of potential winners.
+     */
+    WordState wordState = WordState::notPartOfCorrectWords;
 
     constexpr static Fitness worst() {
-        return {std::numeric_limits<size_t>::max(), std::numeric_limits<size_t>::max(), WordState::trial};
+        return {std::numeric_limits<size_t>::max(), std::numeric_limits<size_t>::max(), WordState::notPartOfCorrectWords};
     }
     constexpr static Fitness best() {
-        return {0, 0, WordState::maybe};
+        return {};
     }
+
+    /**
+     * @brief Helper to make use of tuple's comparisons
+     *
+     * @return constexpr auto
+     */
+    constexpr auto asTuple() const {
+        return std::tie(maxCount, sumCountSquared, wordState);
+    }
+
+private:
+    /**
+     * Don't allow default ctor, only allow static worst() and best() functions so we know what we are getting
+     */
+    Fitness() = default;
 };
 
 constexpr bool operator<=(Fitness const& a, Fitness const& b) {
-    if (a.maxCount != b.maxCount) {
-        return a.maxCount <= b.maxCount;
-    }
-    if (a.sum != b.sum) {
-        return a.sum <= b.sum;
-    }
-    return a.wordState <= b.wordState;
+    return a.asTuple() <= b.asTuple();
 }
-
 constexpr bool operator>=(Fitness const& a, Fitness const& b) {
-    if (a.maxCount != b.maxCount) {
-        return a.maxCount >= b.maxCount;
-    }
-    if (a.sum != b.sum) {
-        return a.sum >= b.sum;
-    }
-    return a.wordState >= b.wordState;
+    return a.asTuple() >= b.asTuple();
 }
-
 constexpr bool operator==(Fitness const& a, Fitness const& b) {
-    return a.maxCount == b.maxCount && a.sum == b.sum && a.wordState == b.wordState;
+    return a.asTuple() == b.asTuple();
 }
-
 constexpr bool operator!=(Fitness const& a, Fitness const& b) {
-    return !(a == b);
+    return a.asTuple() != b.asTuple();
 }
 
 struct Results {
-    Fitness fitness{};
+    Fitness fitness = Fitness::worst();
     std::vector<std::string_view> words{};
 };
 
-Results evalWords(Words const& wordsAllowed, Words const& filteredWords, Preconditions const& pre) {
+Results evalWords(Words const& allowedWords, Words const& filteredWords, Preconditions const& pre) {
     auto results = Results();
-    results.fitness = Fitness::worst();
 
-    wordsAllowed.each([&](std::string_view guessWord) -> bool {
-        auto fitnessGuessWord = Fitness{0, 0, WordState::trial};
+    allowedWords.each([&](std::string_view guessWord) -> bool {
+        auto fitnessGuessWord = Fitness{0, 0, WordState::notPartOfCorrectWords};
         filteredWords.each([&](std::string_view correctWord) -> bool {
             if (correctWord == guessWord) {
-                fitnessGuessWord.wordState = WordState::maybe;
+                fitnessGuessWord.wordState = WordState::partOfCorrectWords;
                 return true;
             }
 
@@ -423,25 +444,20 @@ Results evalWords(Words const& wordsAllowed, Words const& filteredWords, Precond
             // count number of possible matches - the less the better
             auto count = size_t();
             preCopy.eachValidWord(filteredWords, [&](std::string_view validWord) {
-                // std::cout << "guess=" << guessWord << ", correct=" << correctWord << ", valid=" << validWord << std::endl;
                 ++count;
             });
 
-            // std::cout << "guessWord=" << guessWord << ", count=" << count << std::endl;
             fitnessGuessWord.maxCount = std::max(fitnessGuessWord.maxCount, count);
-            fitnessGuessWord.sum += count * count;
-            return fitnessGuessWord <= results.fitness;
-            // return true;
-        });
-        // showWords(filteredWords);
-        /*
-                std::cout << fitnessGuessWord.maxCount << " " << fitnessGuessWord.sum << " " <<
-           toString(fitnessGuessWord.wordState)
-                          << ": " << guessWord << std::endl;
+            fitnessGuessWord.sumCountSquared += count * count;
 
-        */
+            // as an optimization, stop evaluating filtered words when the fitness is worse than the best fitness we already
+            // have. For debugging, use "return true" to evaluate all words.
+            return fitnessGuessWord <= results.fitness;
+        });
+
         if (fitnessGuessWord <= results.fitness) {
             if (fitnessGuessWord != results.fitness) {
+                // got a new lower fitness value
                 results.words.clear();
                 results.fitness = fitnessGuessWord;
             }
@@ -460,10 +476,36 @@ Results evalWords(Words const& wordsAllowed, Words const& filteredWords, Precond
 //  2: letter is in correct spot!
 
 int main(int argc, char** argv) {
+    if (argc == 1) {
+        std::cout << R"(This is a wordle solver, written to assist in https://www.powerlanguage.co.uk/wordle/
+
+Usage: ./wordle <language> [word-state]...
+
+Examples:
+
+    ./wordle en
+        Loads english dictionaries, and calculates the best starting word(s). This can take a while!
+
+    ./wordle en weary00102 yelps10000
+        Loads english dictionaries, and give two guesses. Each guess consists of the word followed by
+        the state for each letter, based on the color output of https://www.powerlanguage.co.uk/wordle/.
+
+        0: letter doesnt exist (e.g. 'w', 'e', 'r' for weary00102)
+        1: letter exists but wrong position (e.g. 'a' for weary00102)
+        2: letter is in correct spot (e.g. 'y' for weary00102)
+
+        Based on that input wordle gives the best word(s) to follow up, so the number of possibilities
+        are reduced as much as possible.
+
+by Martin Leitner-Ankerl 2022
+)";
+
+        exit(1);
+    }
     // read & filter dictionary
     auto language = std::string(argv[1]);
 
-    auto wordsAllowed = wordle::Words(wordle::readAndFilterDictionary("words_" + language + "_allowed.txt"));
+    auto allowedWords = wordle::Words(wordle::readAndFilterDictionary("words_" + language + "_allowed.txt"));
     auto wordsCorrect = wordle::Words(wordle::readAndFilterDictionary("words_" + language + "_correct.txt"));
 
     auto pre = wordle::Preconditions();
@@ -480,14 +522,14 @@ int main(int argc, char** argv) {
     // evaluate words.
     auto numPotentialWords = filteredCorrectWords.size();
 
-    auto results = wordle::evalWords(wordsAllowed, filteredCorrectWords, pre);
+    auto results = wordle::evalWords(allowedWords, filteredCorrectWords, pre);
 
     if (numPotentialWords == 1) {
         std::cout << "The correct word is \"" << results.words.front() << "\"." << std::endl;
     } else {
         // showWords(filteredCorrectWords);
         std::cout << numPotentialWords << " possible words. "
-                  << (results.fitness.wordState == wordle::WordState::maybe ? "Try " : "Limit down with ")
+                  << (results.fitness.wordState == wordle::WordState::partOfCorrectWords ? "Try " : "Limit down with ")
                   << (results.words.size() == 1 ? "this word" : "one of these") << " to rule out at least "
                   << (numPotentialWords - results.fitness.maxCount) << " ("
                   << (100.0 * (numPotentialWords - results.fitness.maxCount) / numPotentialWords) << "%, "
