@@ -187,6 +187,10 @@ public:
 // for each spot check which letters are still allowed
 // create set of characters that need to be there
 
+/**
+ * Based on several words & states,
+ *
+ */
 class Preconditions {
     std::array<AlphabetMap<bool>, NumCharacters> m_allowedCharPerLetter{};
     AlphabetMap<uint8_t> m_mandatoryCharCount{};
@@ -290,13 +294,37 @@ public:
         std::cout << " " << m_mandatoryCharsForSearch << std::endl;
     }
 
-    Words validWords(Words const& allWords) const {
-        auto filtered = std::string();
-        eachValidWord(allWords, [&](std::string_view validWord) -> bool {
-            filtered += validWord;
-            return true;
-        });
-        return Words(std::move(filtered));
+    /**
+     * True if the given word is acceptable based on the current wordle state.
+     *
+     * Highly performance relevant!
+     *
+     * @param word The word to check
+     */
+    constexpr bool isWordValid(std::string_view word) const {
+        // check allowed characters
+        for (int i = 0; i < NumCharacters; ++i) {
+            if (!m_allowedCharPerLetter[i][word[i]]) {
+                // word not allowed, continue with next word
+                return false;
+            }
+        }
+
+        // check that each mandatory letter is used
+        std::array<char, NumCharacters> w{};
+        std::memcpy(w.data(), word.data(), NumCharacters);
+
+        for (auto mandatoryChar : m_mandatoryCharsForSearch) {
+            if (auto it = std::find(w.begin(), w.end(), mandatoryChar); it != w.end()) {
+                // set to 0 so it won't be can't be found again, in case of the same 2 letters
+                *it = 0;
+            } else {
+                // mandatory char not present, continue with next word
+                return false;
+            }
+        }
+
+        return true;
     }
 
     /**
@@ -305,28 +333,11 @@ public:
      * This is highly performance critical!
      */
     template <typename Op>
-    bool eachValidWord(Words const& allWords, Op&& op) const {
+    constexpr bool eachValidWord(Words const& allWords, Op&& op) const {
         return allWords.each([&](std::string_view word) -> bool {
-            // check allowed characters
-            for (int i = 0; i < NumCharacters; ++i) {
-                if (!m_allowedCharPerLetter[i][word[i]]) {
-                    // word not allowed, continue with next word
-                    return true;
-                }
-            }
-
-            // check that each mandatory letter is used
-            std::array<char, NumCharacters> w;
-            std::memcpy(w.data(), word.data(), NumCharacters);
-
-            for (auto mandatoryChar : m_mandatoryCharsForSearch) {
-                if (auto it = std::find(w.begin(), w.end(), mandatoryChar); it != w.end()) {
-                    // set to 0 so it won't be can't be found again, in case of the same 2 letters
-                    *it = 0;
-                } else {
-                    // mandatory char not present, continue with next word
-                    return true;
-                }
+            if (!isWordValid(word)) {
+                // not valid, continue with next word
+                return true;
             }
 
             // convenience: when op returns bool use this, otherwise just call it
@@ -473,11 +484,6 @@ Results evalWords(Words const& allowedWords, Words const& filteredWords, Precond
 
 } // namespace wordle
 
-// Usage e.g. ./wordle en weary00102 yelps10000 zones00200
-//  0: letter doesnt exist
-//  1: letter exists, but wrong position
-//  2: letter is in correct spot!
-
 int main(int argc, char** argv) {
     if (argc == 1) {
         std::cout << R"(This is a wordle solver, written to assist in https://www.powerlanguage.co.uk/wordle/
@@ -520,8 +526,14 @@ by Martin Leitner-Ankerl 2022
 
     // pre.debugPrint();
 
-    auto filteredCorrectWords = pre.validWords(wordsCorrect);
-    // showWords(filteredWords);
+    // create list of words that are currently valid
+    auto filteredWordsStr = std::string();
+    wordsCorrect.each([&](std::string_view word) {
+        if (pre.isWordValid(word)) {
+            filteredWordsStr += word;
+        }
+    });
+    auto filteredCorrectWords = wordle::Words(std::move(filteredWordsStr));
 
     // evaluate words.
     auto numPotentialWords = filteredCorrectWords.size();
@@ -546,8 +558,6 @@ by Martin Leitner-Ankerl 2022
 
         std::cout << std::endl;
     }
-
-    // std::cout << "wordState=" << toString(results.fitness.wordState) << std::endl;
 }
 
 /**

@@ -24,6 +24,6 @@ My plan is to
 ## C++
 
 ```cpp
-clang++ -O2 -std=c++17 src/Cpp/wordle.cpp -o wordle
+clang++ -O3 -std=c++17 src/Cpp/wordle.cpp -o wordle
 ./wordle
 ```
