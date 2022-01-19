@@ -459,7 +459,7 @@ Results evalWords(Words const& allowedWords, Words const& filteredWords, Precond
 
             // count number of possible matches - the less the better
             auto count = size_t();
-            preCopy.eachValidWord(filteredWords, [&](std::string_view validWord) {
+            preCopy.eachValidWord(filteredWords, [&](std::string_view /*validWord*/) {
                 ++count;
             });
 
