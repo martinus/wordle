@@ -13,6 +13,8 @@ namespace wordle {
 // hardcoded constant - all words have these many characters
 static constexpr auto NumCharacters = 5;
 
+static constexpr auto MaxNumGuessWordsToShow = 10;
+
 /**
  * @brief Uppercase to lowercase conversion map A..Z -> a..z.
  *
@@ -475,7 +477,9 @@ Results evalWords(Words const& allowedWords, Words const& filteredWords, Precond
                 results.words.clear();
                 results.fitness = fitnessGuessWord;
             }
-            results.words.push_back(guessWord);
+            if (results.words.size() < MaxNumGuessWordsToShow) {
+                results.words.push_back(guessWord);
+            }
         }
         return true;
     });
@@ -554,6 +558,9 @@ by Martin Leitner-Ankerl 2022
         for (auto const& word : results.words) {
             std::cout << prefix << '"' << word << '"';
             prefix = ", ";
+        }
+        if (results.words.size() == wordle::MaxNumGuessWordsToShow) {
+            std::cout << ", ..." << std::endl;
         }
 
         std::cout << std::endl;

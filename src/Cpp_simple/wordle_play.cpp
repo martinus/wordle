@@ -46,12 +46,12 @@ constexpr std::array<char, NumCharacters> stateFromWord(std::string_view correct
 
 // clang++ -O3 -std=c++17 wordle_play.cpp -o play
 int main(int argc, char** argv) {
-    auto language = std::string(argv[1]);
+    auto prefix = std::string(argv[1]);
     auto correctWord = std::string();
     if (argc == 3) {
         correctWord = argv[2];
     } else {
-        auto wordsAllowed = readWords("words_" + language + "_correct.txt");
+        auto wordsAllowed = readWords(prefix + "_correct.txt");
         // select a random word
         auto rng = std::random_device{};
         auto dist = std::uniform_int_distribution<size_t>(0, wordsAllowed.size() - 1);
