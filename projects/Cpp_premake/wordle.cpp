@@ -424,6 +424,10 @@ private:
     Fitness() = default;
 };
 
+std::ostream& operator<<(std::ostream& os, Fitness const& f) {
+    return os << "maxCount=" << f.maxCount << ", sum=" << f.sumCountSquared << ", state=" << toString(f.wordState);
+}
+
 constexpr bool operator<=(Fitness const& a, Fitness const& b) {
     return a.asTuple() <= b.asTuple();
 }
@@ -472,6 +476,7 @@ Results evalWords(Words const& allowedWords, Words const& filteredWords, Precond
         });
 
         if (fitnessGuessWord <= results.fitness) {
+            std::cout << guessWord << " " << fitnessGuessWord << std::endl;
             if (fitnessGuessWord != results.fitness) {
                 // got a new lower fitness value
                 results.words.clear();
