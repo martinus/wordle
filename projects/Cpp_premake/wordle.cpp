@@ -13,7 +13,7 @@ namespace wordle {
 // hardcoded constant - all words have these many characters
 static constexpr auto NumCharacters = 5;
 
-static constexpr auto MaxNumGuessWordsToShow = 10;
+// static constexpr auto MaxNumGuessWordsToShow = 10;
 
 /**
  * @brief Uppercase to lowercase conversion map A..Z -> a..z.
@@ -131,30 +131,40 @@ class Words {
     std::string m_words{};
 
 public:
+    struct Iter {
+        constexpr Iter(char const* ptr)
+            : m_ptr(ptr) {}
+
+        constexpr std::string_view operator*() const {
+            return std::string_view(m_ptr, NumCharacters);
+        }
+
+        constexpr Iter& operator++() {
+            m_ptr += NumCharacters;
+            return *this;
+        }
+
+        constexpr bool operator==(Iter const& other) const {
+            return m_ptr == other.m_ptr;
+        }
+
+        constexpr bool operator!=(Iter const& other) const {
+            return m_ptr != other.m_ptr;
+        }
+
+    private:
+        char const* m_ptr{};
+    };
+
     Words(std::string&& words)
         : m_words(std::move(words)) {}
 
-    /**
-     * @brief Iterates all words and calls op with each word.
-     *
-     * Stops iterating when op returns true. For convenience, op can also be a void() function.
-     * @return True when op() always returned true (or when op is void), otherwise false.
-     */
-    template <typename Op>
-    constexpr bool each(Op&& op) const {
-        for (size_t idx = 0; idx < m_words.size(); idx += NumCharacters) {
-            auto word = std::string_view(m_words.data() + idx, NumCharacters);
+    Iter begin() const {
+        return Iter(m_words.data());
+    }
 
-            // when op returns a bool, use a false result to bail out.
-            if constexpr (std::is_same_v<void, std::invoke_result_t<Op, std::string_view>>) {
-                op(word);
-            } else {
-                if (!op(word)) {
-                    return false;
-                }
-            }
-        }
-        return true;
+    Iter end() const {
+        return Iter(m_words.data() + m_words.size());
     }
 
     /**
@@ -162,6 +172,10 @@ public:
      */
     size_t size() const {
         return m_words.size() / NumCharacters;
+    }
+
+    bool empty() const {
+        return m_words.empty();
     }
 };
 
@@ -336,29 +350,31 @@ public:
      */
     template <typename Op>
     constexpr bool eachValidWord(Words const& allWords, Op&& op) const {
-        return allWords.each([&](std::string_view word) -> bool {
+        for (std::string_view word : allWords) {
             if (!isWordValid(word)) {
                 // not valid, continue with next word
-                return true;
+                continue;
             }
 
             // convenience: when op returns bool use this, otherwise just call it
             if constexpr (std::is_same_v<void, std::invoke_result_t<Op, std::string_view>>) {
                 op(word);
-                return true;
             } else {
-                return op(word);
+                if (!op(word)) {
+                    return false;
+                }
             }
-        });
+        }
+        return true;
     }
 };
 
 void showWords(Words const& words) {
     auto prefix = "";
-    words.each([&](std::string_view word) {
+    for (std::string_view word : words) {
         std::cout << prefix << word;
         prefix = " ";
-    });
+    }
     std::cout << std::endl;
 }
 
@@ -401,10 +417,10 @@ struct Fitness {
      */
     WordState wordState = WordState::notPartOfCorrectWords;
 
-    constexpr static Fitness worst() {
+    constexpr static Fitness maxi() {
         return {std::numeric_limits<size_t>::max(), std::numeric_limits<size_t>::max(), WordState::notPartOfCorrectWords};
     }
-    constexpr static Fitness best() {
+    constexpr static Fitness mini() {
         return {};
     }
 
@@ -425,14 +441,20 @@ private:
 };
 
 std::ostream& operator<<(std::ostream& os, Fitness const& f) {
-    return os << "maxCount=" << f.maxCount << ", sum=" << f.sumCountSquared << ", state=" << toString(f.wordState);
+    return os << "(maxCount=" << f.maxCount << ", sum=" << f.sumCountSquared << ", state=" << toString(f.wordState) << ")";
 }
 
 constexpr bool operator<=(Fitness const& a, Fitness const& b) {
     return a.asTuple() <= b.asTuple();
 }
+constexpr bool operator<(Fitness const& a, Fitness const& b) {
+    return a.asTuple() < b.asTuple();
+}
 constexpr bool operator>=(Fitness const& a, Fitness const& b) {
     return a.asTuple() >= b.asTuple();
+}
+constexpr bool operator>(Fitness const& a, Fitness const& b) {
+    return a.asTuple() > b.asTuple();
 }
 constexpr bool operator==(Fitness const& a, Fitness const& b) {
     return a.asTuple() == b.asTuple();
@@ -441,11 +463,105 @@ constexpr bool operator!=(Fitness const& a, Fitness const& b) {
     return a.asTuple() != b.asTuple();
 }
 
+/*
 struct Results {
     Fitness fitness = Fitness::worst();
     std::vector<std::string_view> words{};
 };
+*/
 
+struct Node {
+    Preconditions m_pre;
+    Words const* m_allowedWordsToEnter;
+    Words const* m_remainingCorrectWords;
+
+    std::string_view m_guessWord{};
+};
+
+struct Result {
+    Fitness m_fitness = Fitness::maxi();
+    std::string_view m_guessWord{};
+
+    static Result maxi() {
+        return {Fitness::maxi(), ""};
+    }
+
+    static Result mini() {
+        return {Fitness::mini(), ""};
+    }
+};
+
+enum class Player : bool { maxi, mini };
+
+// see https://en.wikipedia.org/wiki/Alpha%E2%80%93beta_pruning#Pseudocode
+Result alphabeta(Node const& node, int depth, Fitness alpha, Fitness beta, Player player) {
+    if (depth == 0 || node.m_remainingCorrectWords->size() == 1) {
+        // fitness: number of words currently possible. We have finished at 1.
+        return {Fitness{node.m_remainingCorrectWords->size(), size_t(100) - depth, WordState::notPartOfCorrectWords},
+                node.m_guessWord};
+    }
+
+    if (Player::maxi == player) {
+        // maxi: wants to find the most hard to guess "correct" word
+        Result bestValue = Result::mini();
+        for (std::string_view correctWord : *node.m_remainingCorrectWords) {
+            // create information for the next node
+            auto nextNode = node;
+            auto state = stateFromWord(correctWord, nextNode.m_guessWord);
+            nextNode.m_pre.addWordAndState(nextNode.m_guessWord, std::string_view(state.data(), state.size()));
+
+            // create a new list of remaining correct words
+            auto filteredWordsStr = std::string();
+            for (std::string_view word : *node.m_remainingCorrectWords) {
+                if (nextNode.m_pre.isWordValid(word)) {
+                    filteredWordsStr += word;
+                }
+            }
+            auto filteredCorrectWords = Words(std::move(filteredWordsStr));
+            nextNode.m_remainingCorrectWords = &filteredCorrectWords;
+            auto value = alphabeta(nextNode, depth - 1, alpha, beta, Player::mini);
+            if (value.m_fitness > bestValue.m_fitness) {
+                bestValue = value;
+            }
+
+            if (bestValue.m_fitness >= beta) {
+                // beta cutoff, stop iterating
+                break;
+            }
+            alpha = std::max(alpha, bestValue.m_fitness);
+        }
+        return bestValue;
+    } else {
+        // mini: wants to make a guess that lowers the number of remaining correct words as much as possible
+        auto bestValue = Result::maxi();
+
+        for (std::string_view guessWord : *node.m_allowedWordsToEnter) {
+            auto nextNode = node;
+            nextNode.m_guessWord = guessWord;
+
+            auto value = alphabeta(nextNode, depth - 1, alpha, beta, Player::maxi);
+            if (value.m_fitness < bestValue.m_fitness) {
+                bestValue.m_fitness = value.m_fitness;
+                bestValue.m_guessWord = guessWord;
+
+                if (depth == 4) {
+                    std::cout << depth << ": \"" << bestValue.m_guessWord << "\" alpha=" << alpha.maxCount
+                              << ", beta=" << beta.maxCount << ", fitness=" << bestValue.m_fitness << std::endl;
+                }
+            }
+
+            if (bestValue.m_fitness <= alpha) {
+                // alpha cutoff, stop iterating
+                break;
+            }
+            beta = std::min(beta, bestValue.m_fitness);
+        }
+
+        return bestValue;
+    }
+}
+
+/*
 Results evalWords(Words const& allowedWords, Words const& filteredWords, Preconditions const& pre) {
     auto results = Results();
 
@@ -490,7 +606,7 @@ Results evalWords(Words const& allowedWords, Words const& filteredWords, Precond
     });
     return results;
 }
-
+*/
 } // namespace wordle
 
 int main(int argc, char** argv) {
@@ -537,17 +653,40 @@ by Martin Leitner-Ankerl 2022
 
     // create list of words that are currently valid
     auto filteredWordsStr = std::string();
-    wordsCorrect.each([&](std::string_view word) {
+    for (auto word : wordsCorrect) {
         if (pre.isWordValid(word)) {
             filteredWordsStr += word;
+            std::cout << word << " ";
         }
-    });
+    }
+    std::cout << std::endl;
     auto filteredCorrectWords = wordle::Words(std::move(filteredWordsStr));
 
     // evaluate words.
-    auto numPotentialWords = filteredCorrectWords.size();
+    // auto numPotentialWords = filteredCorrectWords.size();
 
-    auto results = wordle::evalWords(allowedWords, filteredCorrectWords, pre);
+    /*
+    Preconditions m_pre;
+        Words const* m_allowedWordsToEnter;
+        Words const* m_remainingCorrectWords;
+
+        std::string_view m_guessWord{};
+        */
+
+    auto node = wordle::Node{pre, &allowedWords, &filteredCorrectWords, "<unspecified>"};
+
+    auto bestResult = wordle::alphabeta(node, 4, wordle::Fitness::mini(), wordle::Fitness::maxi(), wordle::Player::mini);
+    /*
+    auto bestResult = wordle::alphabeta(node,
+                                        4,
+                                        wordle::Fitness::mini(),
+                                        wordle::Fitness{1, 100, wordle::WordState::notPartOfCorrectWords},
+                                        wordle::Player::mini);
+*/
+    std::cout << bestResult.m_fitness << " " << bestResult.m_guessWord << std::endl;
+
+#if 0
+    //auto results = wordle::evalWords(allowedWords, filteredCorrectWords, pre);
 
     if (numPotentialWords == 1) {
         std::cout << "The correct word is \"" << results.words.front() << "\"." << std::endl;
@@ -570,6 +709,7 @@ by Martin Leitner-Ankerl 2022
 
         std::cout << std::endl;
     }
+#endif
 }
 
 /**
