@@ -416,7 +416,7 @@ struct Fitness {
      *
      * NOTE: My gut says this is a reasonable heuristic, but I have nothing to prove this.
      */
-    size_t sumCountSquared = 0;
+    size_t depth = 0;
 
     /**
      * Words can be either trial words (that are guaranteed not to be the correct words). Even though these words can be used
@@ -438,7 +438,7 @@ struct Fitness {
      * @return constexpr auto
      */
     constexpr auto asTuple() const {
-        return std::tie(maxCount, sumCountSquared, wordState);
+        return std::tie(maxCount, depth, wordState);
     }
 
 private:
@@ -449,7 +449,7 @@ private:
 };
 
 std::ostream& operator<<(std::ostream& os, Fitness const& f) {
-    return os << "(maxCount=" << f.maxCount << ", sum=" << f.sumCountSquared << ", state=" << toString(f.wordState) << ")";
+    return os << "(maxCount=" << f.maxCount << ", depth=" << f.depth << ", state=" << toString(f.wordState) << ")";
 }
 
 constexpr bool operator<=(Fitness const& a, Fitness const& b) {
@@ -560,7 +560,7 @@ public:
 enum class Player : bool { maxi, mini };
 
 // see https://en.wikipedia.org/wiki/Alpha%E2%80%93beta_pruning#Pseudocode
-Result alphabeta(Node const& node, int depth, Fitness alpha, Fitness beta, Player player) {
+Result alphabeta(Node const& node, size_t currentDepth, size_t maxDepth, Fitness alpha, Fitness beta, Player player) {
     if (Player::maxi == player) {
         // maxi: wants to find the most hard to guess "correct" word
         Result bestValue = Result::mini();
@@ -572,17 +572,17 @@ Result alphabeta(Node const& node, int depth, Fitness alpha, Fitness beta, Playe
 
             // create a new list of remaining correct words
             auto value = Result();
-            if (depth == 1) {
-                // we've reached the end, just calculate fitness.
-                size_t count = 0;
+            if (currentDepth == maxDepth - 1) {
+                // we've reached the end, just calculate number of remaining words as the fitness value.
+                value.m_fitness.maxCount = 0;
+                value.m_fitness.depth = maxDepth;
+                value.m_fitness.wordState = WordState::notPartOfCorrectWords;
+
                 for (std::string_view word : *node.m_remainingCorrectWords) {
                     if (nextNode.m_pre.isWordValid(word)) {
-                        ++count;
+                        ++value.m_fitness.maxCount;
                     }
                 }
-                value.m_fitness.maxCount = count;
-                value.m_fitness.sumCountSquared = size_t(100);
-                value.m_fitness.wordState = WordState::notPartOfCorrectWords;
             } else {
                 // we have to go deeper
                 auto filteredWordsStr = std::string();
@@ -593,41 +593,41 @@ Result alphabeta(Node const& node, int depth, Fitness alpha, Fitness beta, Playe
                 }
                 auto filteredCorrectWords = Words(std::move(filteredWordsStr));
                 nextNode.m_remainingCorrectWords = &filteredCorrectWords;
-                value = alphabeta(nextNode, depth - 1, alpha, beta, Player::mini);
-            }
-            if (value.m_fitness > bestValue.m_fitness) {
-                bestValue = value;
+                value = alphabeta(nextNode, currentDepth + 1, maxDepth, alpha, beta, Player::mini);
             }
 
-            if (bestValue.m_fitness >= beta) {
-                // beta cutoff, stop iterating
-                break;
+            if (value.m_fitness > bestValue.m_fitness) {
+                bestValue = value;
+
+                if (bestValue.m_fitness >= beta) {
+                    // beta cutoff, stop iterating
+                    break;
+                }
+                alpha = std::max(alpha, bestValue.m_fitness);
             }
-            alpha = std::max(alpha, bestValue.m_fitness);
         }
         return bestValue;
     } else {
         // mini: wants to make a guess that lowers the number of remaining correct words as much as possible
-        auto bestValue = Result::maxi();
-
         if (node.m_remainingCorrectWords->size() == 1) {
-            return Result{Fitness{0, size_t(100) - depth, WordState::notPartOfCorrectWords},
-                          node.m_remainingCorrectWords->words()};
+            return Result{Fitness{0, currentDepth, WordState::notPartOfCorrectWords}, node.m_remainingCorrectWords->words()};
         }
 
+        auto bestValue = Result::maxi();
+
+        auto nextNode = node;
         for (std::string_view guessWord : *node.m_allowedWordsToEnter) {
-            auto nextNode = node;
             nextNode.m_guessWord = guessWord;
 
-            auto value = alphabeta(nextNode, depth - 1, alpha, beta, Player::maxi);
+            auto value = alphabeta(nextNode, currentDepth + 1, maxDepth, alpha, beta, Player::maxi);
             value.m_fitness.wordState = WordState::notPartOfCorrectWords;
 
             if (value.m_fitness < bestValue.m_fitness) {
                 bestValue.m_fitness = value.m_fitness;
                 bestValue.m_guessWord = guessWord;
-                if (depth >= 4) {
-                    std::cout << depth << ": \"" << guessWord << "\" alpha=" << alpha.maxCount << ", beta=" << beta.maxCount
-                              << ", fitness=" << value.m_fitness << std::endl;
+                if (currentDepth == 0) {
+                    std::cout << currentDepth << ": \"" << guessWord << "\" alpha=" << alpha.maxCount
+                              << ", beta=" << beta.maxCount << ", fitness=" << value.m_fitness << std::endl;
                 }
             }
 
@@ -758,8 +758,10 @@ by Martin Leitner-Ankerl 2022
 
     auto alpha = wordle::Fitness::mini();
     auto beta = wordle::Fitness::maxi();
-    // auto beta = wordle::Fitness{0, 99, wordle::WordState::notPartOfCorrectWords};
-    auto bestResult = wordle::alphabeta(node, 4, alpha, beta, wordle::Player::mini);
+    //auto beta = wordle::Fitness{2, 4, wordle::WordState::notPartOfCorrectWords};
+    size_t currentDepth = 0;
+    size_t maxDepth = 4;
+    auto bestResult = wordle::alphabeta(node, currentDepth, maxDepth, alpha, beta, wordle::Player::mini);
     /*
     auto bestResult = wordle::alphabeta(node,
                                         4,
