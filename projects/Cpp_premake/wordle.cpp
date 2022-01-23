@@ -7,6 +7,7 @@
 #include <limits>
 #include <set>
 #include <string>
+#include <unordered_set>
 #include <vector>
 
 namespace wordle {
@@ -92,7 +93,8 @@ std::string readAndFilterDictionary(std::filesystem::path filename) {
     auto word = std::string();
 
     // std::set so it's unique and sorted
-    auto uniqueWords = std::set<std::string>();
+    auto words = std::string();
+    auto uniqueWords = std::unordered_set<std::string>();
     while (fin >> word) {
         if (word.size() != NumCharacters) {
             continue;
@@ -111,16 +113,9 @@ std::string readAndFilterDictionary(std::filesystem::path filename) {
         if (!allLettersValid) {
             continue;
         }
-        uniqueWords.emplace(std::move(word));
-    }
-
-    // shuffle words
-    auto wordsVec = std::vector<std::string_view>(uniqueWords.begin(), uniqueWords.end());
-
-    // std::random_shuffle(wordsVec.begin(), wordsVec.end());
-    auto words = std::string();
-    for (auto const& word : wordsVec) {
-        words += word;
+        if (uniqueWords.emplace(word).second) {
+            words += word;
+        }
     }
 
     return words;
@@ -137,6 +132,8 @@ class Words {
 
 public:
     struct Iter {
+        constexpr Iter() = default;
+
         constexpr Iter(char const* ptr)
             : m_ptr(ptr) {}
 
@@ -160,6 +157,8 @@ public:
     private:
         char const* m_ptr{};
     };
+
+    using const_iterator = Iter;
 
     Words(std::string&& words)
         : m_words(std::move(words)) {}
@@ -500,6 +499,64 @@ struct Result {
     }
 };
 
+template <typename ElementIterator>
+class IterateMultiple {
+    using ContainerIterators = std::vector<std::pair<ElementIterator, ElementIterator>>;
+    ContainerIterators m_beginEndIters{};
+
+public:
+    class It {
+        ElementIterator m_elementIter{};
+        typename ContainerIterators::const_iterator m_containerIter{};
+
+    public:
+        constexpr It(ElementIterator elementIter, typename ContainerIterators::const_iterator containerIter)
+            : m_elementIter(elementIter)
+            , m_containerIter(containerIter) {}
+
+        constexpr auto operator*() const {
+            return *m_elementIter;
+        }
+
+        constexpr It& operator++() {
+            if (++m_elementIter == m_containerIter->second) {
+                ++m_containerIter;
+                m_elementIter = m_containerIter->first;
+            }
+            return *this;
+        }
+
+        constexpr bool operator==(It const& other) const {
+            return m_containerIter == other.m_containerIter && m_elementIter == other.m_elementIter;
+        }
+
+        constexpr bool operator!=(It const& other) const {
+            return !(*this == other);
+        }
+    };
+
+    IterateMultiple() {
+        // add sentinel
+        m_beginEndIters.emplace_back();
+    }
+
+    IterateMultiple& add(ElementIterator begin, ElementIterator end) {
+        m_beginEndIters.pop_back();
+        m_beginEndIters.emplace_back(begin, end);
+        m_beginEndIters.emplace_back();
+        return *this;
+    }
+
+    It begin() const {
+        return {m_beginEndIters.front().first, m_beginEndIters.begin()};
+    }
+
+    It end() const {
+        auto backIt = m_beginEndIters.end();
+        return {{}, --backIt};
+    }
+};
+
 enum class Player : bool { maxi, mini };
 
 // see https://en.wikipedia.org/wiki/Alpha%E2%80%93beta_pruning#Pseudocode
@@ -558,34 +615,13 @@ Result alphabeta(Node const& node, int depth, Fitness alpha, Fitness beta, Playe
                           node.m_remainingCorrectWords->words()};
         }
 
-        // first, try all the remaining correct words.
-        for (std::string_view guessWord : *node.m_remainingCorrectWords) {
-            auto nextNode = node;
-            nextNode.m_guessWord = guessWord;
-
-            auto value = alphabeta(nextNode, depth - 1, alpha, beta, Player::maxi);
-            if (value.m_fitness < bestValue.m_fitness) {
-                bestValue.m_fitness = value.m_fitness;
-                bestValue.m_guessWord = guessWord;
-                bestValue.m_fitness.wordState = WordState::partOfCorrectWords;
-                if (depth >= 4) {
-                    std::cout << depth << ": \"" << guessWord << "\" alpha=" << alpha.maxCount << ", beta=" << beta.maxCount
-                              << ", fitness=" << bestValue.m_fitness << std::endl;
-                }
-            }
-
-            if (bestValue.m_fitness <= alpha) {
-                // alpha cutoff, stop iterating
-                break;
-            }
-            beta = std::min(beta, bestValue.m_fitness);
-        }
-
         for (std::string_view guessWord : *node.m_allowedWordsToEnter) {
             auto nextNode = node;
             nextNode.m_guessWord = guessWord;
 
             auto value = alphabeta(nextNode, depth - 1, alpha, beta, Player::maxi);
+            value.m_fitness.wordState = WordState::notPartOfCorrectWords;
+
             if (value.m_fitness < bestValue.m_fitness) {
                 bestValue.m_fitness = value.m_fitness;
                 bestValue.m_guessWord = guessWord;
@@ -722,7 +758,7 @@ by Martin Leitner-Ankerl 2022
 
     auto alpha = wordle::Fitness::mini();
     auto beta = wordle::Fitness::maxi();
-    //auto beta = wordle::Fitness{0, 99, wordle::WordState::notPartOfCorrectWords};
+    // auto beta = wordle::Fitness{0, 99, wordle::WordState::notPartOfCorrectWords};
     auto bestResult = wordle::alphabeta(node, 4, alpha, beta, wordle::Player::mini);
     /*
     auto bestResult = wordle::alphabeta(node,
