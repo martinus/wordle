@@ -7,6 +7,7 @@
 #include <limits>
 #include <set>
 #include <string>
+#include <vector>
 
 namespace wordle {
 
@@ -88,7 +89,6 @@ std::string readAndFilterDictionary(std::filesystem::path filename) {
     if (!fin.is_open()) {
         throw std::runtime_error("Could not open " + filename.string());
     }
-    auto words = std::string();
     auto word = std::string();
 
     // std::set so it's unique and sorted
@@ -114,7 +114,12 @@ std::string readAndFilterDictionary(std::filesystem::path filename) {
         uniqueWords.emplace(std::move(word));
     }
 
-    for (auto const& word : uniqueWords) {
+    // shuffle words
+    auto wordsVec = std::vector<std::string_view>(uniqueWords.begin(), uniqueWords.end());
+
+    // std::random_shuffle(wordsVec.begin(), wordsVec.end());
+    auto words = std::string();
+    for (auto const& word : wordsVec) {
         words += word;
     }
 
@@ -176,6 +181,10 @@ public:
 
     bool empty() const {
         return m_words.empty();
+    }
+
+    std::string const& words() const {
+        return m_words;
     }
 };
 
@@ -475,12 +484,12 @@ struct Node {
     Words const* m_allowedWordsToEnter;
     Words const* m_remainingCorrectWords;
 
-    std::string_view m_guessWord{};
+    std::string m_guessWord{};
 };
 
 struct Result {
     Fitness m_fitness = Fitness::maxi();
-    std::string_view m_guessWord{};
+    std::string m_guessWord{};
 
     static Result maxi() {
         return {Fitness::maxi(), ""};
@@ -495,12 +504,6 @@ enum class Player : bool { maxi, mini };
 
 // see https://en.wikipedia.org/wiki/Alpha%E2%80%93beta_pruning#Pseudocode
 Result alphabeta(Node const& node, int depth, Fitness alpha, Fitness beta, Player player) {
-    if (depth == 0 || node.m_remainingCorrectWords->size() == 1) {
-        // fitness: number of words currently possible. We have finished at 1.
-        return {Fitness{node.m_remainingCorrectWords->size(), size_t(100) - depth, WordState::notPartOfCorrectWords},
-                node.m_guessWord};
-    }
-
     if (Player::maxi == player) {
         // maxi: wants to find the most hard to guess "correct" word
         Result bestValue = Result::mini();
@@ -511,15 +514,30 @@ Result alphabeta(Node const& node, int depth, Fitness alpha, Fitness beta, Playe
             nextNode.m_pre.addWordAndState(nextNode.m_guessWord, std::string_view(state.data(), state.size()));
 
             // create a new list of remaining correct words
-            auto filteredWordsStr = std::string();
-            for (std::string_view word : *node.m_remainingCorrectWords) {
-                if (nextNode.m_pre.isWordValid(word)) {
-                    filteredWordsStr += word;
+            auto value = Result();
+            if (depth == 1) {
+                // we've reached the end, just calculate fitness.
+                size_t count = 0;
+                for (std::string_view word : *node.m_remainingCorrectWords) {
+                    if (nextNode.m_pre.isWordValid(word)) {
+                        ++count;
+                    }
                 }
+                value.m_fitness.maxCount = count;
+                value.m_fitness.sumCountSquared = size_t(100);
+                value.m_fitness.wordState = WordState::notPartOfCorrectWords;
+            } else {
+                // we have to go deeper
+                auto filteredWordsStr = std::string();
+                for (std::string_view word : *node.m_remainingCorrectWords) {
+                    if (nextNode.m_pre.isWordValid(word)) {
+                        filteredWordsStr += word;
+                    }
+                }
+                auto filteredCorrectWords = Words(std::move(filteredWordsStr));
+                nextNode.m_remainingCorrectWords = &filteredCorrectWords;
+                value = alphabeta(nextNode, depth - 1, alpha, beta, Player::mini);
             }
-            auto filteredCorrectWords = Words(std::move(filteredWordsStr));
-            nextNode.m_remainingCorrectWords = &filteredCorrectWords;
-            auto value = alphabeta(nextNode, depth - 1, alpha, beta, Player::mini);
             if (value.m_fitness > bestValue.m_fitness) {
                 bestValue = value;
             }
@@ -535,6 +553,34 @@ Result alphabeta(Node const& node, int depth, Fitness alpha, Fitness beta, Playe
         // mini: wants to make a guess that lowers the number of remaining correct words as much as possible
         auto bestValue = Result::maxi();
 
+        if (node.m_remainingCorrectWords->size() == 1) {
+            return Result{Fitness{0, size_t(100) - depth, WordState::notPartOfCorrectWords},
+                          node.m_remainingCorrectWords->words()};
+        }
+
+        // first, try all the remaining correct words.
+        for (std::string_view guessWord : *node.m_remainingCorrectWords) {
+            auto nextNode = node;
+            nextNode.m_guessWord = guessWord;
+
+            auto value = alphabeta(nextNode, depth - 1, alpha, beta, Player::maxi);
+            if (value.m_fitness < bestValue.m_fitness) {
+                bestValue.m_fitness = value.m_fitness;
+                bestValue.m_guessWord = guessWord;
+                bestValue.m_fitness.wordState = WordState::partOfCorrectWords;
+                if (depth >= 4) {
+                    std::cout << depth << ": \"" << guessWord << "\" alpha=" << alpha.maxCount << ", beta=" << beta.maxCount
+                              << ", fitness=" << bestValue.m_fitness << std::endl;
+                }
+            }
+
+            if (bestValue.m_fitness <= alpha) {
+                // alpha cutoff, stop iterating
+                break;
+            }
+            beta = std::min(beta, bestValue.m_fitness);
+        }
+
         for (std::string_view guessWord : *node.m_allowedWordsToEnter) {
             auto nextNode = node;
             nextNode.m_guessWord = guessWord;
@@ -543,10 +589,9 @@ Result alphabeta(Node const& node, int depth, Fitness alpha, Fitness beta, Playe
             if (value.m_fitness < bestValue.m_fitness) {
                 bestValue.m_fitness = value.m_fitness;
                 bestValue.m_guessWord = guessWord;
-
-                if (depth == 4) {
-                    std::cout << depth << ": \"" << bestValue.m_guessWord << "\" alpha=" << alpha.maxCount
-                              << ", beta=" << beta.maxCount << ", fitness=" << bestValue.m_fitness << std::endl;
+                if (depth >= 4) {
+                    std::cout << depth << ": \"" << guessWord << "\" alpha=" << alpha.maxCount << ", beta=" << beta.maxCount
+                              << ", fitness=" << value.m_fitness << std::endl;
                 }
             }
 
@@ -675,7 +720,10 @@ by Martin Leitner-Ankerl 2022
 
     auto node = wordle::Node{pre, &allowedWords, &filteredCorrectWords, "<unspecified>"};
 
-    auto bestResult = wordle::alphabeta(node, 4, wordle::Fitness::mini(), wordle::Fitness::maxi(), wordle::Player::mini);
+    auto alpha = wordle::Fitness::mini();
+    auto beta = wordle::Fitness::maxi();
+    //auto beta = wordle::Fitness{0, 99, wordle::WordState::notPartOfCorrectWords};
+    auto bestResult = wordle::alphabeta(node, 4, alpha, beta, wordle::Player::mini);
     /*
     auto bestResult = wordle::alphabeta(node,
                                         4,
