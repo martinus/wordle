@@ -222,7 +222,9 @@ public:
 class Preconditions {
     std::array<AlphabetMap<bool>, NumCharacters> m_allowedCharPerLetter{};
     AlphabetMap<uint8_t> m_mandatoryCharCount{};
-    std::string m_mandatoryCharsForSearch{};
+
+    // 0-terminated!
+    std::array<char, NumCharacters + 1> m_mandatoryCharsForSearch{};
 
 public:
     Preconditions() {
@@ -284,11 +286,13 @@ public:
         }
 
         // now merge newMandatoryChars with the old ones, and build the string for search
-        m_mandatoryCharsForSearch.clear();
+        m_mandatoryCharsForSearch = {};
+        auto* mandatoryCharsForSearchPtr = m_mandatoryCharsForSearch.data();
         for (char ch = 'a'; ch <= 'z'; ++ch) {
             m_mandatoryCharCount[ch] = std::max(m_mandatoryCharCount[ch], newMandatoryChars[ch]);
             for (uint8_t i = 0; i < m_mandatoryCharCount[ch]; ++i) {
-                m_mandatoryCharsForSearch += ch;
+                *mandatoryCharsForSearchPtr = ch;
+                ++mandatoryCharsForSearchPtr;
             }
         }
     }
@@ -316,7 +320,7 @@ public:
         for (char ch = 'a'; ch <= 'z'; ++ch) {
             std::cout << '-';
         }
-        std::cout << " " << m_mandatoryCharsForSearch << std::endl;
+        std::cout << " " << m_mandatoryCharsForSearch.data() << std::endl;
     }
 
     /**
@@ -339,14 +343,16 @@ public:
         std::array<char, NumCharacters> w{};
         std::copy(word.data(), word.data() + NumCharacters, w.data());
 
-        for (auto mandatoryChar : m_mandatoryCharsForSearch) {
-            if (auto it = std::find(w.begin(), w.end(), mandatoryChar); it != w.end()) {
+        auto const* mandatoryPtr = m_mandatoryCharsForSearch.data();
+        while (0 != *mandatoryPtr) {
+            if (auto it = std::find(w.begin(), w.end(), *mandatoryPtr); it != w.end()) {
                 // set to 0 so it won't be can't be found again, in case of the same 2 letters
                 *it = 0;
             } else {
                 // mandatory char not present, continue with next word
                 return false;
             }
+            ++mandatoryPtr;
         }
         return true;
     }
