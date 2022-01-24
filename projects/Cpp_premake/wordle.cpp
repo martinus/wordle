@@ -15,6 +15,8 @@ namespace wordle {
 // hardcoded constant - all words have these many characters
 static constexpr auto NumCharacters = 5;
 
+using Word = std::array<char, NumCharacters>;
+
 // static constexpr auto MaxNumGuessWordsToShow = 10;
 
 /**
@@ -49,8 +51,8 @@ constexpr auto createUpperToLowercaseTable() -> std::array<char, 256> {
  * @param guessWord A guessing word.
  * @return Char array with characters 0,1,2 to represent the matching state.
  */
-constexpr std::array<char, NumCharacters> stateFromWord(std::string_view correctWord, std::string_view guessWord) {
-    auto state = std::array<char, NumCharacters>();
+constexpr Word stateFromWord(Word const& correctWord, Word const& guessWord) {
+    auto state = Word();
     auto counts = std::array<uint8_t, 256>();
     for (auto ch : correctWord) {
         ++counts[ch];
@@ -85,7 +87,7 @@ constexpr std::array<char, NumCharacters> stateFromWord(std::string_view correct
  * @param filename Dictionary filename
  * @return std::string One string with all lowercase concatenated words (without any separator).
  */
-std::string readAndFilterDictionary(std::filesystem::path filename) {
+std::vector<Word> readAndFilterDictionary(std::filesystem::path filename) {
     auto fin = std::ifstream(filename);
     if (!fin.is_open()) {
         throw std::runtime_error("Could not open " + filename.string());
@@ -93,7 +95,7 @@ std::string readAndFilterDictionary(std::filesystem::path filename) {
     auto word = std::string();
 
     // std::set so it's unique and sorted
-    auto words = std::string();
+    auto words = std::vector<Word>();
     auto uniqueWords = std::unordered_set<std::string>();
     while (fin >> word) {
         if (word.size() != NumCharacters) {
@@ -114,7 +116,9 @@ std::string readAndFilterDictionary(std::filesystem::path filename) {
             continue;
         }
         if (uniqueWords.emplace(word).second) {
-            words += word;
+            Word w{};
+            std::memcpy(w.data(), word.data(), w.size());
+            words.push_back(w);
         }
     }
 
@@ -128,21 +132,21 @@ std::string readAndFilterDictionary(std::filesystem::path filename) {
  */
 class Words {
     // All words, without separator
-    std::string m_words{};
+    std::vector<Word> m_words{};
 
 public:
     struct Iter {
         constexpr Iter() = default;
 
-        constexpr Iter(char const* ptr)
+        constexpr Iter(Word const* ptr)
             : m_ptr(ptr) {}
 
-        constexpr std::string_view operator*() const {
-            return std::string_view(m_ptr, NumCharacters);
+        constexpr Word const& operator*() const {
+            return *m_ptr;
         }
 
         constexpr Iter& operator++() {
-            m_ptr += NumCharacters;
+            ++m_ptr;
             return *this;
         }
 
@@ -155,12 +159,12 @@ public:
         }
 
     private:
-        char const* m_ptr{};
+        Word const* m_ptr{};
     };
 
     using const_iterator = Iter;
 
-    Words(std::string&& words)
+    Words(std::vector<Word>&& words)
         : m_words(std::move(words)) {}
 
     Iter begin() const {
@@ -175,14 +179,14 @@ public:
      * @brief Number of words
      */
     size_t size() const {
-        return m_words.size() / NumCharacters;
+        return m_words.size();
     }
 
     bool empty() const {
         return m_words.empty();
     }
 
-    std::string const& words() const {
+    std::vector<Word> const& words() const {
         return m_words;
     }
 };
@@ -235,12 +239,16 @@ public:
             throw std::runtime_error("incorrect number of letters");
         }
 
-        auto word = std::string_view(wordAndState.data(), NumCharacters);
-        auto state = std::string_view(wordAndState.data() + NumCharacters, NumCharacters);
+        Word word{};
+        std::memcpy(word.data(), wordAndState.data(), NumCharacters);
+
+        Word state{};
+        std::memcpy(state.data(), wordAndState.data() + NumCharacters, NumCharacters);
+
         addWordAndState(word, state);
     }
 
-    void addWordAndState(std::string_view word, std::string_view state) {
+    void addWordAndState(Word const& word, Word const& state) {
         // std::cout << "addWordAndState: " << word << " " << state << ", mandatory=" << m_mandatoryCharsForSearch;
         auto newMandatoryChars = AlphabetMap<uint8_t>();
         for (size_t charIdx = 0; charIdx < NumCharacters; ++charIdx) {
@@ -318,7 +326,7 @@ public:
      *
      * @param word The word to check
      */
-    bool isWordValid(std::string_view word) const {
+    bool isWordValid(Word const& word) const {
         // check allowed characters
         for (int i = 0; i < NumCharacters; ++i) {
             if (!m_allowedCharPerLetter[i][word[i]]) {
@@ -350,7 +358,7 @@ public:
      */
     template <typename Op>
     constexpr bool eachValidWord(Words const& allWords, Op&& op) const {
-        for (std::string_view word : allWords) {
+        for (Word const& word : allWords) {
             if (!isWordValid(word)) {
                 // not valid, continue with next word
                 continue;
@@ -369,10 +377,14 @@ public:
     }
 };
 
+constexpr std::string_view toStringView(Word const& word) {
+    return std::string_view(word.data(), word.size());
+}
+
 void showWords(Words const& words) {
     auto prefix = "";
-    for (std::string_view word : words) {
-        std::cout << prefix << word;
+    for (Word const& word : words) {
+        std::cout << prefix << toStringView(word);
         prefix = " ";
     }
     std::cout << std::endl;
@@ -478,14 +490,14 @@ struct Node {
 
 struct Result {
     Fitness m_fitness = Fitness::maxi();
-    std::string m_guessWord{};
+    Word m_guessWord{};
 
     static Result maxi() {
-        return {Fitness::maxi(), ""};
+        return {Fitness::maxi(), Word{}};
     }
 
     static Result mini() {
-        return {Fitness::mini(), ""};
+        return {Fitness::mini(), Word{}};
     }
 };
 
@@ -553,18 +565,19 @@ namespace alphabeta {
 
 // see https://en.wikipedia.org/wiki/Alpha%E2%80%93beta_pruning#Pseudocode
 
-Result maxi(Node const& node, std::string_view guessWord, size_t currentDepth, size_t maxDepth, Fitness alpha, Fitness beta);
+Result maxi(Node const& node, Word const& guessWord, size_t currentDepth, size_t maxDepth, Fitness alpha, Fitness beta);
 Result mini(Node const& node, size_t currentDepth, size_t maxDepth, Fitness alpha, Fitness beta);
 
 // mini: wants to make a guess that lowers the number of remaining correct words as much as possible
 Result mini(Node const& node, size_t currentDepth, size_t maxDepth, Fitness alpha, Fitness beta) {
     if (node.m_remainingCorrectWords->size() == 1) {
-        return Result{Fitness{0, currentDepth, WordState::notPartOfCorrectWords}, node.m_remainingCorrectWords->words()};
+        return Result{Fitness{0, currentDepth, WordState::notPartOfCorrectWords},
+                      node.m_remainingCorrectWords->words().front()};
     }
 
     auto bestValue = Result::maxi();
 
-    for (std::string_view guessWord : *node.m_allowedWordsToEnter) {
+    for (Word const& guessWord : *node.m_allowedWordsToEnter) {
         auto value = maxi(node, guessWord, currentDepth + 1, maxDepth, alpha, beta);
         value.m_fitness.wordState = WordState::notPartOfCorrectWords;
 
@@ -572,8 +585,8 @@ Result mini(Node const& node, size_t currentDepth, size_t maxDepth, Fitness alph
             bestValue.m_fitness = value.m_fitness;
             bestValue.m_guessWord = guessWord;
             if (currentDepth == 0) {
-                std::cout << currentDepth << ": \"" << guessWord << "\" alpha=" << alpha.maxCount << ", beta=" << beta.maxCount
-                          << ", fitness=" << value.m_fitness << std::endl;
+                std::cout << currentDepth << ": \"" << toStringView(guessWord) << "\" alpha=" << alpha.maxCount
+                          << ", beta=" << beta.maxCount << ", fitness=" << value.m_fitness << std::endl;
             }
         }
 
@@ -588,13 +601,13 @@ Result mini(Node const& node, size_t currentDepth, size_t maxDepth, Fitness alph
 }
 
 // maxi: wants to find the most hard to guess "correct" word
-Result maxi(Node const& node, std::string_view guessWord, size_t currentDepth, size_t maxDepth, Fitness alpha, Fitness beta) {
+Result maxi(Node const& node, Word const& guessWord, size_t currentDepth, size_t maxDepth, Fitness alpha, Fitness beta) {
     Result bestValue = Result::mini();
-    for (std::string_view correctWord : *node.m_remainingCorrectWords) {
+    for (Word const& correctWord : *node.m_remainingCorrectWords) {
         // create information for the next node
         auto nextNode = node;
         auto state = stateFromWord(correctWord, guessWord);
-        nextNode.m_pre.addWordAndState(guessWord, std::string_view(state.data(), state.size()));
+        nextNode.m_pre.addWordAndState(guessWord, state);
 
         // create a new list of remaining correct words
         auto value = Result();
@@ -604,17 +617,17 @@ Result maxi(Node const& node, std::string_view guessWord, size_t currentDepth, s
             value.m_fitness.depth = maxDepth;
             value.m_fitness.wordState = WordState::notPartOfCorrectWords;
 
-            for (std::string_view word : *node.m_remainingCorrectWords) {
+            for (Word const& word : *node.m_remainingCorrectWords) {
                 if (nextNode.m_pre.isWordValid(word)) {
                     ++value.m_fitness.maxCount;
                 }
             }
         } else {
             // we have to go deeper
-            auto filteredWordsStr = std::string();
-            for (std::string_view word : *node.m_remainingCorrectWords) {
+            auto filteredWordsStr = std::vector<Word>();
+            for (Word const& word : *node.m_remainingCorrectWords) {
                 if (nextNode.m_pre.isWordValid(word)) {
-                    filteredWordsStr += word;
+                    filteredWordsStr.push_back(word);
                 }
             }
             auto filteredCorrectWords = Words(std::move(filteredWordsStr));
@@ -728,11 +741,11 @@ by Martin Leitner-Ankerl 2022
     // pre.debugPrint();
 
     // create list of words that are currently valid
-    auto filteredWordsStr = std::string();
+    auto filteredWordsStr = std::vector<wordle::Word>();
     for (auto word : wordsCorrect) {
         if (pre.isWordValid(word)) {
-            filteredWordsStr += word;
-            std::cout << word << " ";
+            filteredWordsStr.push_back(word);
+            std::cout << wordle::toStringView(word) << " ";
         }
     }
     std::cout << std::endl;
@@ -758,7 +771,7 @@ by Martin Leitner-Ankerl 2022
     size_t maxDepth = 4;
     auto bestResult = wordle::alphabeta::mini(node, currentDepth, maxDepth, alpha, beta);
 
-    std::cout << bestResult.m_fitness << " " << bestResult.m_guessWord << std::endl;
+    std::cout << bestResult.m_fitness << " " << wordle::toStringView(bestResult.m_guessWord) << std::endl;
 
 #if 0
     //auto results = wordle::evalWords(allowedWords, filteredCorrectWords, pre);
@@ -798,12 +811,14 @@ static_assert(createUpperToLowercaseTable()['A'] == 'a');
 static_assert(createUpperToLowercaseTable()['Z'] == 'z');
 static_assert(createUpperToLowercaseTable()['1'] == 0);
 
-/**
- * Creates an std::string_view from an std::array, e.g. for use in comparisons
- */
-template <size_t N>
-constexpr std::string_view toStringView(std::array<char, N> const& ary) {
-    return std::string_view(ary.data(), ary.size());
+constexpr Word stateFromWord(std::string_view a, std::string_view b) {
+    Word wa{};
+    Word wb{};
+    for (size_t i = 0; i < NumCharacters; ++i) {
+        wa[i] = a[i];
+        wb[i] = b[i];
+    }
+    return wordle::stateFromWord(wa, wb);
 }
 
 static_assert(toStringView(stateFromWord("aacde", "aaaxx")) == "22000");
