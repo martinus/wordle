@@ -223,7 +223,7 @@ class Preconditions {
     std::array<AlphabetMap<bool>, NumCharacters> m_allowedCharPerLetter{};
     AlphabetMap<uint8_t> m_mandatoryCharCount{};
 
-    // 0-terminated!
+    // 0-terminated, therefore n+1!
     std::array<char, NumCharacters + 1> m_mandatoryCharsForSearch{};
 
 public:
@@ -260,6 +260,7 @@ public:
                     // can only set this to false, earlier that character has already appeared as a 1, so it has to be
                     // somewhere else
                     m_allowedCharPerLetter[charIdx][word[charIdx]] = false;
+                    // TODO also every else not allowed except for the '1'
                 } else {
                     // only when that character is *not* anywhere else in the word,
                     // letter word[i] doesn't exist, not allowed at any place
