@@ -15,6 +15,7 @@ namespace wordle {
 // hardcoded constant - all words have these many characters
 static constexpr auto NumCharacters = 5;
 
+// Word stores byte 0-26 ('a' to 'z').
 using Word = std::array<char, NumCharacters>;
 
 // static constexpr auto MaxNumGuessWordsToShow = 10;
@@ -53,22 +54,20 @@ constexpr auto createUpperToLowercaseTable() -> std::array<char, 256> {
  */
 constexpr Word stateFromWord(Word const& correctWord, Word const& guessWord) {
     auto state = Word();
-    auto counts = std::array<uint8_t, 256>();
-    for (auto ch : correctWord) {
-        ++counts[ch];
-    }
+    auto counts = std::array<uint8_t, 'z' - 'a' + 1>();
 
     for (int i = 0; i < NumCharacters; ++i) {
-        state[i] = '0';
         if (guessWord[i] == correctWord[i]) {
             // got the correct letter!
             state[i] = '2';
-            --counts[guessWord[i]];
+        } else {
+            ++counts[correctWord[i]];
+            state[i] = '0';
         }
     }
 
     for (int i = 0; i < NumCharacters; ++i) {
-        if (counts[guessWord[i]] && state[i] != '2') {
+        if (guessWord[i] != correctWord[i] && counts[guessWord[i]]) {
             state[i] = '1';
             --counts[guessWord[i]];
         }
@@ -117,7 +116,9 @@ std::vector<Word> readAndFilterDictionary(std::filesystem::path filename) {
         }
         if (uniqueWords.emplace(word).second) {
             Word w{};
-            std::memcpy(w.data(), word.data(), w.size());
+            for (size_t i = 0; i < word.size(); ++i) {
+                w[i] = word[i] - 'a';
+            }
             words.push_back(w);
         }
     }
@@ -203,12 +204,12 @@ class AlphabetMap {
 public:
     constexpr Mapped& operator[](char ch) {
         // no out of bounds check because this has to be very fast
-        return m_data[ch - 'a'];
+        return m_data[ch];
     }
 
     constexpr Mapped const& operator[](char ch) const {
         // no out of bounds check because this has to be very fast
-        return m_data[ch - 'a'];
+        return m_data[ch];
     }
 };
 
@@ -229,7 +230,7 @@ class Preconditions {
 public:
     Preconditions() {
         // initially, all letters are allowed
-        for (char ch = 'a'; ch <= 'z'; ++ch) {
+        for (char ch = 0; ch <= 'z' - 'a'; ++ch) {
             for (auto& ac : m_allowedCharPerLetter) {
                 ac[ch] = true;
             }
@@ -242,11 +243,11 @@ public:
         }
 
         Word word{};
-        std::memcpy(word.data(), wordAndState.data(), NumCharacters);
-
         Word state{};
-        std::memcpy(state.data(), wordAndState.data() + NumCharacters, NumCharacters);
-
+        for (size_t i = 0; i < NumCharacters; ++i) {
+            word[i] = wordAndState[i] - 'a';
+            state[i] = wordAndState[i + NumCharacters];
+        }
         addWordAndState(word, state);
     }
 
@@ -289,7 +290,7 @@ public:
         // now merge newMandatoryChars with the old ones, and build the string for search
         m_mandatoryCharsForSearch = {};
         auto* mandatoryCharsForSearchPtr = m_mandatoryCharsForSearch.data();
-        for (char ch = 'a'; ch <= 'z'; ++ch) {
+        for (char ch = 0; ch <= 'z' - 'a'; ++ch) {
             m_mandatoryCharCount[ch] = std::max(m_mandatoryCharCount[ch], newMandatoryChars[ch]);
             for (uint8_t i = 0; i < m_mandatoryCharCount[ch]; ++i) {
                 *mandatoryCharsForSearchPtr = ch;
@@ -384,29 +385,21 @@ public:
     }
 };
 
-constexpr std::string_view toStringView(Word const& word) {
-    return std::string_view(word.data(), word.size());
+std::string toString(Word const& word) {
+    std::string str;
+    for (auto ch : word) {
+        str += ch + 'a';
+    }
+    return str;
 }
 
 void showWords(Words const& words) {
     auto prefix = "";
     for (Word const& word : words) {
-        std::cout << prefix << toStringView(word);
+        std::cout << prefix << toString(word);
         prefix = " ";
     }
     std::cout << std::endl;
-}
-
-enum WordState { partOfCorrectWords, notPartOfCorrectWords };
-
-constexpr std::string_view toString(WordState ws) {
-    switch (ws) {
-    case WordState::partOfCorrectWords:
-        return "part of correct words";
-    case WordState::notPartOfCorrectWords:
-        return "not part of correct words";
-    }
-    return "<unknown>";
 }
 
 /**
@@ -429,15 +422,8 @@ struct Fitness {
      */
     size_t depth = 0;
 
-    /**
-     * Words can be either trial words (that are guaranteed not to be the correct words). Even though these words can be used
-     * to limit down the number of possibilities, they certainly won't match. So all other things being equal, we prefer words
-     * that are in the set of potential winners.
-     */
-    WordState wordState = WordState::notPartOfCorrectWords;
-
     constexpr static Fitness maxi() {
-        return {std::numeric_limits<size_t>::max(), std::numeric_limits<size_t>::max(), WordState::notPartOfCorrectWords};
+        return {std::numeric_limits<size_t>::max(), std::numeric_limits<size_t>::max()};
     }
     constexpr static Fitness mini() {
         return {};
@@ -449,7 +435,7 @@ struct Fitness {
      * @return constexpr auto
      */
     constexpr auto asTuple() const {
-        return std::tie(maxCount, depth, wordState);
+        return std::tie(maxCount, depth);
     }
 
 private:
@@ -460,7 +446,7 @@ private:
 };
 
 std::ostream& operator<<(std::ostream& os, Fitness const& f) {
-    return os << "(maxCount=" << f.maxCount << ", depth=" << f.depth << ", state=" << toString(f.wordState) << ")";
+    return os << "(maxCount=" << f.maxCount << ", depth=" << f.depth << ")";
 }
 
 constexpr bool operator<=(Fitness const& a, Fitness const& b) {
@@ -578,21 +564,19 @@ Result mini(Node const& node, size_t currentDepth, size_t maxDepth, Fitness alph
 // mini: wants to make a guess that lowers the number of remaining correct words as much as possible
 Result mini(Node const& node, size_t currentDepth, size_t maxDepth, Fitness alpha, Fitness beta) {
     if (node.m_remainingCorrectWords->size() == 1) {
-        return Result{Fitness{0, currentDepth, WordState::notPartOfCorrectWords},
-                      node.m_remainingCorrectWords->words().front()};
+        return Result{Fitness{0, currentDepth}, node.m_remainingCorrectWords->words().front()};
     }
 
     auto bestValue = Result::maxi();
 
     for (Word const& guessWord : *node.m_allowedWordsToEnter) {
         auto value = maxi(node, guessWord, currentDepth + 1, maxDepth, alpha, beta);
-        value.m_fitness.wordState = WordState::notPartOfCorrectWords;
 
         if (value.m_fitness < bestValue.m_fitness) {
             bestValue.m_fitness = value.m_fitness;
             bestValue.m_guessWord = guessWord;
             if (currentDepth == 0) {
-                std::cout << currentDepth << ": \"" << toStringView(guessWord) << "\" alpha=" << alpha.maxCount
+                std::cout << currentDepth << ": \"" << toString(guessWord) << "\" alpha=" << alpha.maxCount
                           << ", beta=" << beta.maxCount << ", fitness=" << value.m_fitness << std::endl;
             }
         }
@@ -622,7 +606,6 @@ Result maxi(Node const& node, Word const& guessWord, size_t currentDepth, size_t
             // we've reached the end, just calculate number of remaining words as the fitness value.
             value.m_fitness.maxCount = 0;
             value.m_fitness.depth = maxDepth;
-            value.m_fitness.wordState = WordState::notPartOfCorrectWords;
 
             for (Word const& word : *node.m_remainingCorrectWords) {
                 if (nextNode.m_pre.isWordValid(word)) {
@@ -657,52 +640,6 @@ Result maxi(Node const& node, Word const& guessWord, size_t currentDepth, size_t
 
 } // namespace alphabeta
 
-/*
-Results evalWords(Words const& allowedWords, Words const& filteredWords, Preconditions const& pre) {
-    auto results = Results();
-
-    allowedWords.each([&](std::string_view guessWord) -> bool {
-        auto fitnessGuessWord = Fitness{0, 0, WordState::notPartOfCorrectWords};
-        filteredWords.each([&](std::string_view correctWord) -> bool {
-            if (correctWord == guessWord) {
-                fitnessGuessWord.wordState = WordState::partOfCorrectWords;
-                return true;
-            }
-
-            auto preCopy = pre;
-            auto state = stateFromWord(correctWord, guessWord);
-            preCopy.addWordAndState(guessWord, std::string_view(state.data(), state.size()));
-
-            // count number of possible matches - the less the better
-            auto count = size_t();
-            preCopy.eachValidWord(filteredWords, [&](std::string_view validWord) {
-                ++count;
-            });
-
-            fitnessGuessWord.maxCount = std::max(fitnessGuessWord.maxCount, count);
-            fitnessGuessWord.sumCountSquared += count * count;
-
-            // as an optimization, stop evaluating filtered words when the fitness is worse than the best fitness we already
-            // have. For debugging, use "return true" to evaluate all words.
-            return fitnessGuessWord <= results.fitness;
-        });
-
-        if (fitnessGuessWord <= results.fitness) {
-            std::cout << guessWord << " " << fitnessGuessWord << std::endl;
-            if (fitnessGuessWord != results.fitness) {
-                // got a new lower fitness value
-                results.words.clear();
-                results.fitness = fitnessGuessWord;
-            }
-            if (results.words.size() < MaxNumGuessWordsToShow) {
-                results.words.push_back(guessWord);
-            }
-        }
-        return true;
-    });
-    return results;
-}
-*/
 } // namespace wordle
 
 int main(int argc, char** argv) {
@@ -752,7 +689,7 @@ by Martin Leitner-Ankerl 2022
     for (auto word : wordsCorrect) {
         if (pre.isWordValid(word)) {
             filteredWordsStr.push_back(word);
-            std::cout << wordle::toStringView(word) << " ";
+            std::cout << wordle::toString(word) << " ";
         }
     }
     std::cout << std::endl;
@@ -773,12 +710,12 @@ by Martin Leitner-Ankerl 2022
 
     auto alpha = wordle::Fitness::mini();
     auto beta = wordle::Fitness::maxi();
-    // auto beta = wordle::Fitness{2, 4, wordle::WordState::notPartOfCorrectWords};
+    // auto beta = wordle::Fitness{2, 4};
     size_t currentDepth = 0;
     size_t maxDepth = 4;
     auto bestResult = wordle::alphabeta::mini(node, currentDepth, maxDepth, alpha, beta);
 
-    std::cout << bestResult.m_fitness << " " << wordle::toStringView(bestResult.m_guessWord) << std::endl;
+    std::cout << bestResult.m_fitness << " " << wordle::toString(bestResult.m_guessWord) << std::endl;
 
 #if 0
     //auto results = wordle::evalWords(allowedWords, filteredCorrectWords, pre);
@@ -818,37 +755,55 @@ static_assert(createUpperToLowercaseTable()['A'] == 'a');
 static_assert(createUpperToLowercaseTable()['Z'] == 'z');
 static_assert(createUpperToLowercaseTable()['1'] == 0);
 
-constexpr Word stateFromWord(std::string_view a, std::string_view b) {
+constexpr Word stateFromWord(std::string_view correctWord, std::string_view guessWord) {
     Word wa{};
     Word wb{};
     for (size_t i = 0; i < NumCharacters; ++i) {
-        wa[i] = a[i];
-        wb[i] = b[i];
+        wa[i] = correctWord[i] - 'a';
+        wb[i] = guessWord[i] - 'a';
     }
     return wordle::stateFromWord(wa, wb);
 }
 
-static_assert(toStringView(stateFromWord("aacde", "aaaxx")) == "22000");
-static_assert(toStringView(stateFromWord("aacde", "aaxxx")) == "22000");
-static_assert(toStringView(stateFromWord("abcde", "aaxxx")) == "20000");
-static_assert(toStringView(stateFromWord("abcde", "xaaxx")) == "01000");
-static_assert(toStringView(stateFromWord("gouge", "bough")) == "02220");
-static_assert(toStringView(stateFromWord("gouge", "lento")) == "01001");
-static_assert(toStringView(stateFromWord("gouge", "raise")) == "00002");
-static_assert(toStringView(stateFromWord("jeans", "ashen")) == "11011");
-static_assert(toStringView(stateFromWord("jeans", "knelt")) == "01100");
-static_assert(toStringView(stateFromWord("jeans", "raise")) == "01011");
-static_assert(toStringView(stateFromWord("lilac", "apian")) == "00120");
-static_assert(toStringView(stateFromWord("lilac", "mambo")) == "01000");
-static_assert(toStringView(stateFromWord("lilac", "stare")) == "00100");
-static_assert(toStringView(stateFromWord("panic", "chase")) == "10100");
-static_assert(toStringView(stateFromWord("panic", "chase")) == "10100");
-static_assert(toStringView(stateFromWord("panic", "magic")) == "02022");
-static_assert(toStringView(stateFromWord("panic", "rocky")) == "00100");
-static_assert(toStringView(stateFromWord("shark", "zanza")) == "01000");
-static_assert(toStringView(stateFromWord("solar", "abaca")) == "10000");
-static_assert(toStringView(stateFromWord("solar", "alaap")) == "01020");
-static_assert(toStringView(stateFromWord("solar", "alaap")) == "01020");
-static_assert(toStringView(stateFromWord("solar", "raise")) == "11010");
+constexpr bool operator==(Word const& a, Word const& b) {
+    for (size_t i = 0; i < a.size(); ++i) {
+        if (a[i] != b[i]) {
+            return false;
+        }
+    }
+    return true;
+}
+
+constexpr Word toStateWord(std::string_view str) {
+    Word w{};
+    for (size_t i = 0; i < str.size(); ++i) {
+        w[i] = str[i];
+    }
+    return w;
+}
+
+static_assert(stateFromWord("aacde", "aaaxx") == toStateWord("22000"));
+static_assert(stateFromWord("knoll", "pills") == toStateWord("00120"));
+static_assert(stateFromWord("aacde", "aaxxx") == toStateWord("22000"));
+static_assert(stateFromWord("abcde", "aaxxx") == toStateWord("20000"));
+static_assert(stateFromWord("abcde", "xaaxx") == toStateWord("01000"));
+static_assert(stateFromWord("gouge", "bough") == toStateWord("02220"));
+static_assert(stateFromWord("gouge", "lento") == toStateWord("01001"));
+static_assert(stateFromWord("gouge", "raise") == toStateWord("00002"));
+static_assert(stateFromWord("jeans", "ashen") == toStateWord("11011"));
+static_assert(stateFromWord("jeans", "knelt") == toStateWord("01100"));
+static_assert(stateFromWord("jeans", "raise") == toStateWord("01011"));
+static_assert(stateFromWord("lilac", "apian") == toStateWord("00120"));
+static_assert(stateFromWord("lilac", "mambo") == toStateWord("01000"));
+static_assert(stateFromWord("lilac", "stare") == toStateWord("00100"));
+static_assert(stateFromWord("panic", "chase") == toStateWord("10100"));
+static_assert(stateFromWord("panic", "chase") == toStateWord("10100"));
+static_assert(stateFromWord("panic", "magic") == toStateWord("02022"));
+static_assert(stateFromWord("panic", "rocky") == toStateWord("00100"));
+static_assert(stateFromWord("shark", "zanza") == toStateWord("01000"));
+static_assert(stateFromWord("solar", "abaca") == toStateWord("10000"));
+static_assert(stateFromWord("solar", "alaap") == toStateWord("01020"));
+static_assert(stateFromWord("solar", "alaap") == toStateWord("01020"));
+static_assert(stateFromWord("solar", "raise") == toStateWord("11010"));
 
 } // namespace wordle::test
