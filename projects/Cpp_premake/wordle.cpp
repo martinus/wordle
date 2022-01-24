@@ -575,6 +575,7 @@ Result mini(Node const& node, size_t currentDepth, size_t maxDepth, Fitness alph
         if (value.m_fitness < bestValue.m_fitness) {
             bestValue.m_fitness = value.m_fitness;
             bestValue.m_guessWord = guessWord;
+
             if (currentDepth == 0) {
                 std::cout << currentDepth << ": \"" << toString(guessWord) << "\" alpha=" << alpha.maxCount
                           << ", beta=" << beta.maxCount << ", fitness=" << value.m_fitness << std::endl;
@@ -616,7 +617,7 @@ Result maxi(Node const& node, Word const& guessWord, size_t currentDepth, size_t
             // we have to go deeper
             auto filteredWordsStr = std::vector<Word>();
             for (Word const& word : *node.m_remainingCorrectWords) {
-                if (nextNode.m_pre.isWordValid(word)) {
+                if (nextNode.m_pre.isWordValid(word) && guessWord != word) {
                     filteredWordsStr.push_back(word);
                 }
             }
