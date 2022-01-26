@@ -576,10 +576,10 @@ Result maxi(Node const& node, Word const& guessWord, size_t currentDepth, size_t
         if (currentDepth == maxDepth - 1) {
             // we've reached the end, just calculate number of remaining words as the fitness value.
             value.m_fitness.maxCount = 0;
-            value.m_fitness.depth = maxDepth;
+            value.m_fitness.depth = currentDepth;
 
             for (Word const& word : *node.m_remainingCorrectWords) {
-                if (nextNode.m_pre.isWordValid(word)) {
+                if (nextNode.m_pre.isWordValid(word) && guessWord != word) {
                     ++value.m_fitness.maxCount;
                 }
             }
