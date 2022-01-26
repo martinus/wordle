@@ -128,52 +128,22 @@ std::vector<Word> readAndFilterDictionary(std::filesystem::path filename) {
 
 /**
  * @brief Collection of words, all with the same number of letters.
- *
- * TODO don't use a global constant for word length
  */
 class Words {
-    // All words, without separator
     std::vector<Word> m_words{};
 
 public:
-    struct Iter {
-        constexpr Iter() = default;
-
-        constexpr Iter(Word const* ptr)
-            : m_ptr(ptr) {}
-
-        constexpr Word const& operator*() const {
-            return *m_ptr;
-        }
-
-        constexpr Iter& operator++() {
-            ++m_ptr;
-            return *this;
-        }
-
-        constexpr bool operator==(Iter const& other) const {
-            return m_ptr == other.m_ptr;
-        }
-
-        constexpr bool operator!=(Iter const& other) const {
-            return m_ptr != other.m_ptr;
-        }
-
-    private:
-        Word const* m_ptr{};
-    };
-
-    using const_iterator = Iter;
+    using const_iterator = std::vector<Word>::const_iterator;
 
     Words(std::vector<Word>&& words)
         : m_words(std::move(words)) {}
 
-    Iter begin() const {
-        return Iter(m_words.data());
+    const_iterator begin() const {
+        return m_words.begin();
     }
 
-    Iter end() const {
-        return Iter(m_words.data() + m_words.size());
+    const_iterator end() const {
+        return m_words.end();
     }
 
     /**
@@ -572,14 +542,14 @@ Result mini(Node const& node, size_t currentDepth, size_t maxDepth, Fitness alph
     for (Word const& guessWord : *node.m_allowedWordsToEnter) {
         auto value = maxi(node, guessWord, currentDepth + 1, maxDepth, alpha, beta);
 
+        if (currentDepth == 0 && value.m_fitness <= bestValue.m_fitness) {
+            std::cout << currentDepth << ": \"" << toString(guessWord) << "\" alpha=" << alpha.maxCount
+                      << ", beta=" << beta.maxCount << ", fitness=" << value.m_fitness << std::endl;
+        }
+
         if (value.m_fitness < bestValue.m_fitness) {
             bestValue.m_fitness = value.m_fitness;
             bestValue.m_guessWord = guessWord;
-
-            if (currentDepth == 0) {
-                std::cout << currentDepth << ": \"" << toString(guessWord) << "\" alpha=" << alpha.maxCount
-                          << ", beta=" << beta.maxCount << ", fitness=" << value.m_fitness << std::endl;
-            }
         }
 
         if (bestValue.m_fitness <= alpha) {
@@ -592,51 +562,96 @@ Result mini(Node const& node, size_t currentDepth, size_t maxDepth, Fitness alph
     return bestValue;
 }
 
-// maxi: wants to find the most hard to guess "correct" word
-Result maxi(Node const& node, Word const& guessWord, size_t currentDepth, size_t maxDepth, Fitness alpha, Fitness beta) {
-    Result bestValue = Result::mini();
-    for (Word const& correctWord : *node.m_remainingCorrectWords) {
-        // create information for the next node
-        auto nextNode = node;
-        auto state = stateFromWord(correctWord, guessWord);
-        nextNode.m_pre.addWordAndState(guessWord, state);
+constexpr size_t calcBucketFromState(Word const& state) {
+    auto idx = size_t();
+    for (auto c : state) {
+        idx = idx * 3 + c - '0';
+    }
+    return idx;
+}
 
-        // create a new list of remaining correct words
-        auto value = Result();
-        if (currentDepth == maxDepth - 1) {
-            // we've reached the end, just calculate number of remaining words as the fitness value.
-            value.m_fitness.maxCount = 0;
-            value.m_fitness.depth = maxDepth;
+static_assert(0 == calcBucketFromState(Word{'0', '0', '0', '0', '0'}));
+static_assert(1 == calcBucketFromState(Word{'0', '0', '0', '0', '1'}));
+static_assert(2 == calcBucketFromState(Word{'0', '0', '0', '0', '2'}));
+static_assert(242 == calcBucketFromState(Word{'2', '2', '2', '2', '2'}));
 
-            for (Word const& word : *node.m_remainingCorrectWords) {
-                if (nextNode.m_pre.isWordValid(word)) {
-                    ++value.m_fitness.maxCount;
-                }
-            }
-        } else {
-            // we have to go deeper
-            auto filteredWordsStr = std::vector<Word>();
-            for (Word const& word : *node.m_remainingCorrectWords) {
-                if (nextNode.m_pre.isWordValid(word) && guessWord != word) {
-                    filteredWordsStr.push_back(word);
-                }
-            }
-            auto filteredCorrectWords = Words(std::move(filteredWordsStr));
-            nextNode.m_remainingCorrectWords = &filteredCorrectWords;
-            value = mini(nextNode, currentDepth + 1, maxDepth, alpha, beta);
-        }
+constexpr Word calcStateFromBucket(size_t bucketIdx) {
+    Word w{};
+    auto idx = w.size();
+    do {
+        --idx;
+        w[idx] = bucketIdx % 3 + '0';
+        bucketIdx /= 3;
+    } while (idx != 0);
+    return w;
+}
 
-        if (value.m_fitness > bestValue.m_fitness) {
-            bestValue = value;
-
-            if (bestValue.m_fitness >= beta) {
-                // beta cutoff, stop iterating
-                break;
-            }
-            alpha = std::max(alpha, bestValue.m_fitness);
+constexpr bool operator==(Word const& a, Word const& b) {
+    for (size_t i = 0; i < a.size(); ++i) {
+        if (a[i] != b[i]) {
+            return false;
         }
     }
-    return bestValue;
+    return true;
+}
+
+static_assert(calcStateFromBucket(0) == Word{'0', '0', '0', '0', '0'});
+static_assert(calcStateFromBucket(1) == Word{'0', '0', '0', '0', '1'});
+static_assert(calcStateFromBucket(2) == Word{'0', '0', '0', '0', '2'});
+static_assert(calcStateFromBucket(242) == Word{'2', '2', '2', '2', '2'});
+
+// maxi: wants to find the most hard to guess "correct" word
+Result maxi(Node const& node, Word const& guessWord, size_t currentDepth, size_t maxDepth, Fitness alpha, Fitness beta) {
+    // using "Absurdle" logic. It's not optimal, but it's fast. And I want to find the perfect solutions for absurdle. Heheh.
+
+    // first, find the bucket with the highest number of entries.
+    // 00000
+    // 00001
+    // 00002
+    // 00010
+    // ...
+    // 22222
+    //
+    // There are 3^5 = 243 buckets.
+    auto bucketCounts = std::array<size_t, calcBucketFromState(Word{'2', '2', '2', '2', '2'}) + 1>();
+    auto bestBucket = size_t();
+    for (Word const& correctWord : *node.m_remainingCorrectWords) {
+        auto state = stateFromWord(correctWord, guessWord);
+        auto bucket = calcBucketFromState(state);
+        auto newCount = ++bucketCounts[bucket];
+        if (newCount > bucketCounts[bestBucket]) {
+            bestBucket = bucket;
+        }
+    }
+
+    if (currentDepth == maxDepth - 1) {
+        auto value = Result();
+        value.m_fitness.maxCount = bucketCounts[bestBucket];
+        value.m_fitness.depth = maxDepth;
+        return value;
+    }
+
+    auto bestState = calcStateFromBucket(bestBucket);
+
+    // now we got the best bucket, use *that*.
+    auto filteredWords = std::vector<Word>(bucketCounts[bestBucket]);
+    auto* wordPtr = filteredWords.data();
+    for (Word const& correctWord : *node.m_remainingCorrectWords) {
+        if (bestState == stateFromWord(correctWord, guessWord)) {
+            *wordPtr = correctWord;
+            ++wordPtr;
+        }
+    }
+
+    auto filteredCorrectWords = Words(std::move(filteredWords));
+
+    // create information for the next node. The node is the same, since guessWord and bestState doesn't change
+    auto nextNode = node;
+    nextNode.m_pre.addWordAndState(guessWord, bestState);
+    nextNode.m_remainingCorrectWords = &filteredCorrectWords;
+
+    // we have to go deeper
+    return mini(nextNode, currentDepth + 1, maxDepth, alpha, beta);
 }
 
 } // namespace alphabeta
