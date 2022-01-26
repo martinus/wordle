@@ -128,52 +128,22 @@ std::vector<Word> readAndFilterDictionary(std::filesystem::path filename) {
 
 /**
  * @brief Collection of words, all with the same number of letters.
- *
- * TODO don't use a global constant for word length
  */
 class Words {
-    // All words, without separator
     std::vector<Word> m_words{};
 
 public:
-    struct Iter {
-        constexpr Iter() = default;
-
-        constexpr Iter(Word const* ptr)
-            : m_ptr(ptr) {}
-
-        constexpr Word const& operator*() const {
-            return *m_ptr;
-        }
-
-        constexpr Iter& operator++() {
-            ++m_ptr;
-            return *this;
-        }
-
-        constexpr bool operator==(Iter const& other) const {
-            return m_ptr == other.m_ptr;
-        }
-
-        constexpr bool operator!=(Iter const& other) const {
-            return m_ptr != other.m_ptr;
-        }
-
-    private:
-        Word const* m_ptr{};
-    };
-
-    using const_iterator = Iter;
+    using const_iterator = std::vector<Word>::const_iterator;
 
     Words(std::vector<Word>&& words)
         : m_words(std::move(words)) {}
 
-    Iter begin() const {
-        return Iter(m_words.data());
+    const_iterator begin() const {
+        return m_words.begin();
     }
 
-    Iter end() const {
-        return Iter(m_words.data() + m_words.size());
+    const_iterator end() const {
+        return m_words.end();
     }
 
     /**
