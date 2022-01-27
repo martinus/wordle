@@ -133,16 +133,22 @@ class Words {
     std::vector<Word> m_words{};
 
 public:
-    using const_iterator = std::vector<Word>::const_iterator;
-
     Words(std::vector<Word>&& words)
         : m_words(std::move(words)) {}
 
-    const_iterator begin() const {
+    auto begin() const {
         return m_words.begin();
     }
 
-    const_iterator end() const {
+    auto end() const {
+        return m_words.end();
+    }
+
+    auto begin() {
+        return m_words.begin();
+    }
+
+    auto end() {
         return m_words.end();
     }
 
@@ -447,8 +453,8 @@ struct Results {
 
 struct Node {
     Preconditions m_pre;
-    Words const* m_allowedWordsToEnter;
-    Words const* m_remainingCorrectWords;
+    Words* m_allowedWordsToEnter;
+    Words* m_remainingCorrectWords;
 };
 
 struct Result {
@@ -529,10 +535,10 @@ namespace alphabeta {
 // see https://en.wikipedia.org/wiki/Alpha%E2%80%93beta_pruning#Pseudocode
 
 Result maxi(Node const& node, Word const& guessWord, size_t currentDepth, size_t maxDepth, Fitness alpha, Fitness beta);
-Result mini(Node const& node, size_t currentDepth, size_t maxDepth, Fitness alpha, Fitness beta);
+Result mini(Node& node, size_t currentDepth, size_t maxDepth, Fitness alpha, Fitness beta);
 
 // mini: wants to make a guess that lowers the number of remaining correct words as much as possible
-Result mini(Node const& node, size_t currentDepth, size_t maxDepth, Fitness alpha, Fitness beta) {
+Result mini(Node& node, size_t currentDepth, size_t maxDepth, Fitness alpha, Fitness beta) {
     if (node.m_remainingCorrectWords->size() == 1) {
         return Result{Fitness{0, currentDepth}, node.m_remainingCorrectWords->words().front()};
     }
