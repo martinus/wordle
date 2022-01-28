@@ -1,3 +1,5 @@
+#include "parallel/for_each.h"
+
 #include <algorithm>
 #include <array>
 #include <cstring> // memcpy
@@ -5,6 +7,7 @@
 #include <fstream>
 #include <iostream>
 #include <limits>
+#include <mutex>
 #include <set>
 #include <string>
 #include <unordered_set>
@@ -545,24 +548,46 @@ Result mini(Node& node, size_t currentDepth, size_t maxDepth, Fitness alpha, Fit
 
     auto bestValue = Result::maxi();
 
-    for (Word const& guessWord : *node.m_allowedWordsToEnter) {
-        auto value = maxi(node, guessWord, currentDepth + 1, maxDepth, alpha, beta);
+    if (currentDepth == 0) {
+        // depth 0: run loop in parallel
+        auto mutex = std::mutex();
+        ankerl::parallel::for_each(
+            node.m_allowedWordsToEnter->begin(), node.m_allowedWordsToEnter->end(), [&](Word const& guessWord) {
+                auto value = maxi(node, guessWord, currentDepth + 1, maxDepth, alpha, beta);
 
-        if (value.m_fitness < bestValue.m_fitness) {
-            bestValue.m_fitness = value.m_fitness;
-            bestValue.m_guessWord = guessWord;
+                auto lock = std::lock_guard(mutex);
 
-            if (currentDepth == 0) {
-                std::cout << currentDepth << ": \"" << toString(guessWord) << "\" alpha=" << alpha.maxCount
-                          << ", beta=" << beta.maxCount << ", fitness=" << value.m_fitness << std::endl;
+                if (value.m_fitness < bestValue.m_fitness) {
+                    bestValue.m_fitness = value.m_fitness;
+                    bestValue.m_guessWord = guessWord;
+
+                    std::cout << currentDepth << ": \"" << toString(guessWord) << "\" alpha=" << alpha.maxCount
+                              << ", beta=" << beta.maxCount << ", fitness=" << value.m_fitness << std::endl;
+                }
+
+                if (bestValue.m_fitness <= alpha) {
+                    // alpha cutoff, stop iterating
+                    return ankerl::parallel::Continue::no;
+                }
+                beta = std::min(beta, bestValue.m_fitness);
+                // continue iterating
+                return ankerl::parallel::Continue::yes;
+            });
+    } else {
+        for (Word const& guessWord : *node.m_allowedWordsToEnter) {
+            auto value = maxi(node, guessWord, currentDepth + 1, maxDepth, alpha, beta);
+
+            if (value.m_fitness < bestValue.m_fitness) {
+                bestValue.m_fitness = value.m_fitness;
+                bestValue.m_guessWord = guessWord;
             }
-        }
 
-        if (bestValue.m_fitness <= alpha) {
-            // alpha cutoff, stop iterating
-            break;
+            if (bestValue.m_fitness <= alpha) {
+                // alpha cutoff, stop iterating
+                break;
+            }
+            beta = std::min(beta, bestValue.m_fitness);
         }
-        beta = std::min(beta, bestValue.m_fitness);
     }
 
     return bestValue;
@@ -672,17 +697,6 @@ by Martin Leitner-Ankerl 2022
     std::cout << std::endl;
     auto filteredCorrectWords = wordle::Words(std::move(filteredWordsStr));
 
-    // evaluate words.
-    // auto numPotentialWords = filteredCorrectWords.size();
-
-    /*
-    Preconditions m_pre;
-        Words const* m_allowedWordsToEnter;
-        Words const* m_remainingCorrectWords;
-
-        std::string_view m_guessWord{};
-        */
-
     auto node = wordle::Node{pre, &allowedWords, &filteredCorrectWords};
 
     auto alpha = wordle::Fitness::mini();
@@ -693,32 +707,6 @@ by Martin Leitner-Ankerl 2022
     auto bestResult = wordle::alphabeta::mini(node, currentDepth, maxDepth, alpha, beta);
 
     std::cout << bestResult.m_fitness << " " << wordle::toString(bestResult.m_guessWord) << std::endl;
-
-#if 0
-    //auto results = wordle::evalWords(allowedWords, filteredCorrectWords, pre);
-
-    if (numPotentialWords == 1) {
-        std::cout << "The correct word is \"" << results.words.front() << "\"." << std::endl;
-    } else {
-        // showWords(filteredCorrectWords);
-        std::cout << numPotentialWords << " possible words. "
-                  << (results.fitness.wordState == wordle::WordState::partOfCorrectWords ? "Try " : "Limit down with ")
-                  << (results.words.size() == 1 ? "this word" : "one of these") << " to rule out at least "
-                  << (numPotentialWords - results.fitness.maxCount) << " ("
-                  << (100.0 * (numPotentialWords - results.fitness.maxCount) / numPotentialWords) << "%, "
-                  << results.fitness.maxCount << " remain) of these:";
-        auto prefix = " ";
-        for (auto const& word : results.words) {
-            std::cout << prefix << '"' << word << '"';
-            prefix = ", ";
-        }
-        if (results.words.size() == wordle::MaxNumGuessWordsToShow) {
-            std::cout << ", ..." << std::endl;
-        }
-
-        std::cout << std::endl;
-    }
-#endif
 }
 
 /**

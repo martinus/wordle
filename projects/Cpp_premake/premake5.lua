@@ -11,7 +11,9 @@ project "wordle"
     cppdialect "C++17"
     warnings "Extra"
 
-    files { "**.h", "**.cpp" }
+    files { "src/**.h", "src/**.cpp" }
+    includedirs { "src"}
+    linkoptions { "-lpthread" }
 
     filter "configurations:debug"
         defines { "DEBUG" }
