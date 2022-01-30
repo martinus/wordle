@@ -1,19 +1,15 @@
 workspace "wordle"
     configurations { "release", "debug" }
-
-project "wordle"
-    kind "ConsoleApp"
-    language "C++"
-    targetdir "bin/%{cfg.buildcfg}"
     defaultplatform "configurations:release"
-
     toolset "clang"
+    kind "ConsoleApp"
     cppdialect "C++17"
     warnings "Extra"
+    targetdir "bin/%{cfg.buildcfg}"
+    language "C++"
 
-    files { "src/**.h", "src/**.cpp" }
-    includedirs { "src"}
     linkoptions { "-lpthread" }
+    includedirs { "src"}
 
     filter "configurations:debug"
         defines { "DEBUG" }
@@ -23,3 +19,10 @@ project "wordle"
     filter "configurations:release"
         defines { "NDEBUG" }
         optimize "Full"
+
+
+project "tests"
+    files { "src/**.h", "src/test/**.cpp" }
+
+project "wordle"
+    files { "src/**.h", "src/wordle/**.cpp" }
