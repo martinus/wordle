@@ -1,4 +1,5 @@
 #include <parallel/for_each.h>
+#include <wordle/parseDict.h>
 #include <wordle/Word.h>
 
 #include <algorithm>
@@ -16,19 +17,6 @@
 
 namespace wordle {
 
-/**
- * @brief Uppercase to lowercase conversion map A..Z -> a..z.
- *
- * Invalid characters are mapped to 0.
- */
-constexpr auto createUpperToLowercaseTable() -> std::array<char, 256> {
-    auto data = std::array<char, 256>{}; // 0-initialize
-    for (auto ch = 'a'; ch != 'z' + 1; ++ch) {
-        data[ch] = ch;
-        data[ch + 'A' - 'a'] = ch;
-    }
-    return data;
-}
 
 /**
  * @brief Given a correct word and a guessing word, calculates the color for each letter.
@@ -87,39 +75,7 @@ std::vector<Word> readAndFilterDictionary(std::filesystem::path filename) {
     if (!fin.is_open()) {
         throw std::runtime_error("Could not open " + filename.string());
     }
-    auto word = std::string();
-
-    // std::set so it's unique and sorted
-    auto words = std::vector<Word>();
-    auto uniqueWords = std::unordered_set<std::string>();
-    while (fin >> word) {
-        if (word.size() != NumCharacters) {
-            continue;
-        }
-
-        bool allLettersValid = true;
-        for (auto& ch : word) {
-            constexpr auto map = createUpperToLowercaseTable();
-            ch = map[ch];
-            if (ch == 0) {
-                allLettersValid = false;
-                continue;
-            }
-        }
-
-        if (!allLettersValid) {
-            continue;
-        }
-        if (uniqueWords.emplace(word).second) {
-            Word w{};
-            for (size_t i = 0; i < word.size(); ++i) {
-                w[i] = word[i] - 'a';
-            }
-            words.push_back(w);
-        }
-    }
-
-    return words;
+    return parseDict(fin);
 }
 
 /**
@@ -550,7 +506,7 @@ Result mini(Node& node, size_t currentDepth, size_t maxDepth, Fitness alpha, Fit
 
                 auto lock = std::lock_guard(mutex);
 
-                if (value.m_fitness < bestValue.m_fitness) {
+                if (value.m_fitness <= bestValue.m_fitness) {
                     bestValue.m_fitness = value.m_fitness;
                     bestValue.m_guessWord = guessWord;
 
@@ -696,7 +652,7 @@ by Martin Leitner-Ankerl 2022
     auto beta = wordle::Fitness::maxi();
     // auto beta = wordle::Fitness{2, 4};
     size_t currentDepth = 0;
-    size_t maxDepth = 4;
+    size_t maxDepth = 6;
     auto bestResult = wordle::alphabeta::mini(node, currentDepth, maxDepth, alpha, beta);
 
     std::cout << bestResult.m_fitness << " " << wordle::toString(bestResult.m_guessWord) << std::endl;
@@ -706,12 +662,6 @@ by Martin Leitner-Ankerl 2022
  * Tests evaluated at compile time
  */
 namespace wordle::test {
-
-static_assert(createUpperToLowercaseTable()['a'] == 'a');
-static_assert(createUpperToLowercaseTable()['z'] == 'z');
-static_assert(createUpperToLowercaseTable()['A'] == 'a');
-static_assert(createUpperToLowercaseTable()['Z'] == 'z');
-static_assert(createUpperToLowercaseTable()['1'] == 0);
 
 constexpr Word stateFromWord(std::string_view correctWord, std::string_view guessWord) {
     Word wa{};

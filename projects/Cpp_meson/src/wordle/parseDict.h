@@ -2,12 +2,12 @@
 
 #include <wordle/Word.h>
 
-#include <vector>
 #include <iosfwd>
+#include <vector>
 
-// Parses a dictionary, extracting words
 namespace wordle {
 
+// Parses a dictionary, extracting words.
 std::vector<Word> parseDict(std::istream& in);
 
-}
+} // namespace wordle

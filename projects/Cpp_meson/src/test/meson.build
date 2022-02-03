@@ -1,6 +1,6 @@
 test_sources = [
     'main.cpp',
-    'parseDict.cpp',
+    'parseDictTest.cpp',
 ]
 
 wordle_data_dir = '-DWORDLE_DATA_DIR="@0@"'.format(meson.global_source_root())

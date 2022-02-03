@@ -55,6 +55,7 @@ void for_each(It begin, It end, Op&& op, int numThreads) {
     auto size = std::distance(begin, end);
     auto numWorkers = std::min<int>(numThreads, size);
     auto workers = std::vector<std::thread>();
+    workers.reserve(numThreads);
 
     auto atomicIdx = std::atomic<decltype(size)>(0);
     for (auto workerId = int(0); workerId < numWorkers - 1; ++workerId) {
