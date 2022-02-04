@@ -1,6 +1,6 @@
-#include <parallel/for_each.h>
-#include <wordle/parseDict.h>
+#include <util/parallel/for_each.h>
 #include <wordle/Word.h>
+#include <wordle/parseDict.h>
 
 #include <algorithm>
 #include <array>
@@ -16,7 +16,6 @@
 #include <vector>
 
 namespace wordle {
-
 
 /**
  * @brief Given a correct word and a guessing word, calculates the color for each letter.

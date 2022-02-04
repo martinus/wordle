@@ -13,8 +13,6 @@ project('wordle', 'cpp',
 # add dependency for threads (-lpthread, see https://mesonbuild.com/howtox.html)
 thread_dep = dependency('threads')
 
-inc = include_directories('src')
-link_args = '-lpthread'
-
+subdir('src/lib')
+subdir('src/app')
 subdir('src/test')
-subdir('src/wordle')
