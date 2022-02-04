@@ -1,5 +1,6 @@
 lib_sources = [
     'wordle/parseDict.cpp',
+    'wordle/Word.cpp',
 ]
 
 link_args = '-lpthread'

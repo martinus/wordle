@@ -77,47 +77,6 @@ std::vector<Word> readAndFilterDictionary(std::filesystem::path filename) {
     return parseDict(fin);
 }
 
-/**
- * @brief Collection of words, all with the same number of letters.
- */
-class Words {
-    std::vector<Word> m_words{};
-
-public:
-    Words(std::vector<Word>&& words)
-        : m_words(std::move(words)) {}
-
-    auto begin() const {
-        return m_words.begin();
-    }
-
-    auto end() const {
-        return m_words.end();
-    }
-
-    auto begin() {
-        return m_words.begin();
-    }
-
-    auto end() {
-        return m_words.end();
-    }
-
-    /**
-     * @brief Number of words
-     */
-    size_t size() const {
-        return m_words.size();
-    }
-
-    bool empty() const {
-        return m_words.empty();
-    }
-
-    std::vector<Word> const& words() const {
-        return m_words;
-    }
-};
 
 /**
  * @brief Fast map from alphabet 'a'..'z' to a value
@@ -143,6 +102,15 @@ public:
 // for each spot check which letters are still allowed
 // create set of characters that need to be there
 
+template <size_t N>
+std::string toString(std::array<char, N> const& x, size_t s) {
+    std::string str;
+    for (size_t i = 0; i < s; ++i) {
+        str.push_back(x[i] + 'a');
+    }
+    return str;
+}
+
 /**
  * Based on several words & states,
  *
@@ -151,8 +119,8 @@ class Preconditions {
     std::array<AlphabetMap<bool>, NumCharacters> m_allowedCharPerLetter{};
     AlphabetMap<uint8_t> m_mandatoryCharCount{};
 
-    // 0-terminated, therefore n+1!
-    std::array<char, NumCharacters + 1> m_mandatoryCharsForSearch{};
+    std::array<char, NumCharacters> m_mandatoryCharsForSearch{};
+    size_t m_numMandatoryCharsForSearch{};
 
 public:
     Preconditions() {
@@ -179,7 +147,10 @@ public:
     }
 
     void addWordAndState(Word const& word, Word const& state) {
-        // std::cout << "addWordAndState: " << word << " " << state << ", mandatory=" << m_mandatoryCharsForSearch;
+#if 0
+        std::cout << "addWordAndState: " << word << " " << state << ", mandatory='"
+                  << toString(m_mandatoryCharsForSearch, m_numMandatoryCharsForSearch) << "'" << std::endl;
+#endif
         auto newMandatoryChars = AlphabetMap<uint8_t>();
         for (size_t charIdx = 0; charIdx < NumCharacters; ++charIdx) {
             // correct=shark, guess=zanza, state=01000
@@ -215,13 +186,12 @@ public:
         }
 
         // now merge newMandatoryChars with the old ones, and build the string for search
-        m_mandatoryCharsForSearch = {};
-        auto* mandatoryCharsForSearchPtr = m_mandatoryCharsForSearch.data();
+        m_numMandatoryCharsForSearch = 0;
         for (char ch = 0; ch <= 'z' - 'a'; ++ch) {
             m_mandatoryCharCount[ch] = std::max(m_mandatoryCharCount[ch], newMandatoryChars[ch]);
             for (uint8_t i = 0; i < m_mandatoryCharCount[ch]; ++i) {
-                *mandatoryCharsForSearchPtr = ch;
-                ++mandatoryCharsForSearchPtr;
+                m_mandatoryCharsForSearch[m_numMandatoryCharsForSearch] = ch;
+                ++m_numMandatoryCharsForSearch;
             }
         }
     }
@@ -269,19 +239,16 @@ public:
         }
 
         // check that each mandatory letter is used
-        std::array<char, NumCharacters> w{};
-        std::copy(word.data(), word.data() + NumCharacters, w.data());
+        auto w = word;
 
-        auto const* mandatoryPtr = m_mandatoryCharsForSearch.data();
-        while (0 != *mandatoryPtr) {
-            if (auto it = std::find(w.begin(), w.end(), *mandatoryPtr); it != w.end()) {
-                // set to 0 so it won't be can't be found again, in case of the same 2 letters
-                *it = 0;
+        for (size_t i = 0; i < m_numMandatoryCharsForSearch; ++i) {
+            if (auto it = std::find(w.begin(), w.end(), m_mandatoryCharsForSearch[i]); it != w.end()) {
+                // set to an invalid char so it won't be can't be found again, in case of the same 2 letters
+                *it = 127;
             } else {
                 // mandatory char not present, continue with next word
                 return false;
             }
-            ++mandatoryPtr;
         }
         return true;
     }
@@ -292,7 +259,7 @@ public:
      * This is highly performance critical!
      */
     template <typename Op>
-    constexpr bool eachValidWord(Words const& allWords, Op&& op) const {
+    constexpr bool eachValidWord(std::vector<Word> const& allWords, Op&& op) const {
         for (Word const& word : allWords) {
             if (!isWordValid(word)) {
                 // not valid, continue with next word
@@ -320,7 +287,7 @@ std::string toString(Word const& word) {
     return str;
 }
 
-void showWords(Words const& words) {
+void showWords(std::vector<Word> const& words) {
     auto prefix = "";
     for (Word const& word : words) {
         std::cout << prefix << toString(word);
@@ -349,8 +316,10 @@ struct Fitness {
      */
     size_t depth = 0;
 
+    size_t numFilteredCorrectWords = 0;
+
     constexpr static Fitness maxi() {
-        return {std::numeric_limits<size_t>::max(), std::numeric_limits<size_t>::max()};
+        return {std::numeric_limits<size_t>::max(), std::numeric_limits<size_t>::max(), std::numeric_limits<size_t>::max()};
     }
     constexpr static Fitness mini() {
         return {};
@@ -362,7 +331,7 @@ struct Fitness {
      * @return constexpr auto
      */
     constexpr auto asTuple() const {
-        return std::tie(maxCount, depth);
+        return std::tie(maxCount, depth, numFilteredCorrectWords);
     }
 
 private:
@@ -373,7 +342,8 @@ private:
 };
 
 std::ostream& operator<<(std::ostream& os, Fitness const& f) {
-    return os << "(maxCount=" << f.maxCount << ", depth=" << f.depth << ")";
+    return os << "(maxCount=" << f.maxCount << ", depth=" << f.depth
+              << ", numFilteredCorrectWords=" << f.numFilteredCorrectWords << ")";
 }
 
 constexpr bool operator<=(Fitness const& a, Fitness const& b) {
@@ -404,8 +374,8 @@ struct Results {
 
 struct Node {
     Preconditions m_pre;
-    Words* m_allowedWordsToEnter;
-    Words* m_remainingCorrectWords;
+    std::vector<Word>* m_allowedWordsToEnter;
+    std::vector<Word>* m_remainingCorrectWords;
 };
 
 struct Result {
@@ -491,7 +461,7 @@ Result mini(Node& node, size_t currentDepth, size_t maxDepth, Fitness alpha, Fit
 // mini: wants to make a guess that lowers the number of remaining correct words as much as possible
 Result mini(Node& node, size_t currentDepth, size_t maxDepth, Fitness alpha, Fitness beta) {
     if (node.m_remainingCorrectWords->size() == 1) {
-        return Result{Fitness{0, currentDepth}, node.m_remainingCorrectWords->words().front()};
+        return Result{Fitness{0, currentDepth}, node.m_remainingCorrectWords->front()};
     }
 
     auto bestValue = Result::maxi();
@@ -505,7 +475,7 @@ Result mini(Node& node, size_t currentDepth, size_t maxDepth, Fitness alpha, Fit
 
                 auto lock = std::lock_guard(mutex);
 
-                if (value.m_fitness <= bestValue.m_fitness) {
+                if (value.m_fitness < bestValue.m_fitness) {
                     bestValue.m_fitness = value.m_fitness;
                     bestValue.m_guessWord = guessWord;
 
@@ -544,6 +514,7 @@ Result mini(Node& node, size_t currentDepth, size_t maxDepth, Fitness alpha, Fit
 // maxi: wants to find the most hard to guess "correct" word
 Result maxi(Node const& node, Word const& guessWord, size_t currentDepth, size_t maxDepth, Fitness alpha, Fitness beta) {
     Result bestValue = Result::mini();
+    auto sumFilteredCorrectWords = size_t();
     for (Word const& correctWord : *node.m_remainingCorrectWords) {
         // create information for the next node
         auto nextNode = node;
@@ -564,15 +535,15 @@ Result maxi(Node const& node, Word const& guessWord, size_t currentDepth, size_t
             }
         } else {
             // we have to go deeper
-            auto filteredWordsStr = std::vector<Word>();
+            auto filteredWords = std::vector<Word>();
             for (Word const& word : *node.m_remainingCorrectWords) {
                 if (nextNode.m_pre.isWordValid(word) && guessWord != word) {
-                    filteredWordsStr.push_back(word);
+                    filteredWords.push_back(word);
                 }
             }
-            auto filteredCorrectWords = Words(std::move(filteredWordsStr));
-            nextNode.m_remainingCorrectWords = &filteredCorrectWords;
+            nextNode.m_remainingCorrectWords = &filteredWords;
             value = mini(nextNode, currentDepth + 1, maxDepth, alpha, beta);
+            sumFilteredCorrectWords += filteredWords.size();
         }
 
         if (value.m_fitness > bestValue.m_fitness) {
@@ -585,6 +556,7 @@ Result maxi(Node const& node, Word const& guessWord, size_t currentDepth, size_t
             alpha = std::max(alpha, bestValue.m_fitness);
         }
     }
+    bestValue.m_fitness.numFilteredCorrectWords = sumFilteredCorrectWords;
     return bestValue;
 }
 
@@ -623,8 +595,8 @@ by Martin Leitner-Ankerl 2022
     // read & filter dictionary
     auto prefix = std::string(argv[1]);
 
-    auto allowedWords = wordle::Words(wordle::readAndFilterDictionary(prefix + "_allowed.txt"));
-    auto wordsCorrect = wordle::Words(wordle::readAndFilterDictionary(prefix + "_correct.txt"));
+    auto allowedWords = wordle::readAndFilterDictionary(prefix + "_allowed.txt");
+    auto wordsCorrect = wordle::readAndFilterDictionary(prefix + "_correct.txt");
 
     auto pre = wordle::Preconditions();
 
@@ -635,15 +607,14 @@ by Martin Leitner-Ankerl 2022
     // pre.debugPrint();
 
     // create list of words that are currently valid
-    auto filteredWordsStr = std::vector<wordle::Word>();
+    auto filteredCorrectWords = std::vector<wordle::Word>();
     for (auto word : wordsCorrect) {
         if (pre.isWordValid(word)) {
-            filteredWordsStr.push_back(word);
+            filteredCorrectWords.push_back(word);
             std::cout << wordle::toString(word) << " ";
         }
     }
     std::cout << std::endl;
-    auto filteredCorrectWords = wordle::Words(std::move(filteredWordsStr));
 
     auto node = wordle::Node{pre, &allowedWords, &filteredCorrectWords};
 
@@ -651,7 +622,7 @@ by Martin Leitner-Ankerl 2022
     auto beta = wordle::Fitness::maxi();
     // auto beta = wordle::Fitness{2, 4};
     size_t currentDepth = 0;
-    size_t maxDepth = 6;
+    size_t maxDepth = 4;
     auto bestResult = wordle::alphabeta::mini(node, currentDepth, maxDepth, alpha, beta);
 
     std::cout << bestResult.m_fitness << " " << wordle::toString(bestResult.m_guessWord) << std::endl;
@@ -672,15 +643,6 @@ constexpr Word stateFromWord(std::string_view correctWord, std::string_view gues
     return wordle::stateFromWord(wa, wb);
 }
 
-constexpr bool operator==(Word const& a, Word const& b) {
-    for (size_t i = 0; i < a.size(); ++i) {
-        if (a[i] != b[i]) {
-            return false;
-        }
-    }
-    return true;
-}
-
 constexpr Word toStateWord(std::string_view str) {
     Word w{};
     for (size_t i = 0; i < str.size(); ++i) {
@@ -690,7 +652,6 @@ constexpr Word toStateWord(std::string_view str) {
 }
 
 static_assert(stateFromWord("aacde", "aaaxx") == toStateWord("22000"));
-static_assert(stateFromWord("knoll", "pills") == toStateWord("00120"));
 static_assert(stateFromWord("aacde", "aaxxx") == toStateWord("22000"));
 static_assert(stateFromWord("abcde", "aaxxx") == toStateWord("20000"));
 static_assert(stateFromWord("abcde", "xaaxx") == toStateWord("01000"));
@@ -700,6 +661,7 @@ static_assert(stateFromWord("gouge", "raise") == toStateWord("00002"));
 static_assert(stateFromWord("jeans", "ashen") == toStateWord("11011"));
 static_assert(stateFromWord("jeans", "knelt") == toStateWord("01100"));
 static_assert(stateFromWord("jeans", "raise") == toStateWord("01011"));
+static_assert(stateFromWord("knoll", "pills") == toStateWord("00120"));
 static_assert(stateFromWord("lilac", "apian") == toStateWord("00120"));
 static_assert(stateFromWord("lilac", "mambo") == toStateWord("01000"));
 static_assert(stateFromWord("lilac", "stare") == toStateWord("00100"));
@@ -707,6 +669,10 @@ static_assert(stateFromWord("panic", "chase") == toStateWord("10100"));
 static_assert(stateFromWord("panic", "chase") == toStateWord("10100"));
 static_assert(stateFromWord("panic", "magic") == toStateWord("02022"));
 static_assert(stateFromWord("panic", "rocky") == toStateWord("00100"));
+static_assert(stateFromWord("pleat", "becap") == toStateWord("01021"));
+static_assert(stateFromWord("pleat", "model") == toStateWord("00011"));
+static_assert(stateFromWord("pleat", "stele") == toStateWord("01210"));
+static_assert(stateFromWord("pleat", "trawl") == toStateWord("10101"));
 static_assert(stateFromWord("shark", "zanza") == toStateWord("01000"));
 static_assert(stateFromWord("solar", "abaca") == toStateWord("10000"));
 static_assert(stateFromWord("solar", "alaap") == toStateWord("01020"));
