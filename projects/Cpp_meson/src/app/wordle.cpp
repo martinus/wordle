@@ -514,7 +514,7 @@ Result mini(Node& node, size_t currentDepth, size_t maxDepth, Fitness alpha, Fit
 // maxi: wants to find the most hard to guess "correct" word
 Result maxi(Node const& node, Word const& guessWord, size_t currentDepth, size_t maxDepth, Fitness alpha, Fitness beta) {
     Result bestValue = Result::mini();
-    auto sumFilteredCorrectWords = size_t();
+    auto maxFilteredCorrectWords = size_t();
     for (Word const& correctWord : *node.m_remainingCorrectWords) {
         // create information for the next node
         auto nextNode = node;
@@ -543,7 +543,7 @@ Result maxi(Node const& node, Word const& guessWord, size_t currentDepth, size_t
             }
             nextNode.m_remainingCorrectWords = &filteredWords;
             value = mini(nextNode, currentDepth + 1, maxDepth, alpha, beta);
-            sumFilteredCorrectWords += filteredWords.size();
+            maxFilteredCorrectWords  = std::max(maxFilteredCorrectWords, filteredWords.size());
         }
 
         if (value.m_fitness > bestValue.m_fitness) {
@@ -556,7 +556,7 @@ Result maxi(Node const& node, Word const& guessWord, size_t currentDepth, size_t
             alpha = std::max(alpha, bestValue.m_fitness);
         }
     }
-    bestValue.m_fitness.numFilteredCorrectWords = sumFilteredCorrectWords;
+    bestValue.m_fitness.numFilteredCorrectWords = maxFilteredCorrectWords;
     return bestValue;
 }
 
