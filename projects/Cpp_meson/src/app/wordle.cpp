@@ -1,6 +1,7 @@
 #include <util/parallel/for_each.h>
 #include <wordle/Word.h>
 #include <wordle/parseDict.h>
+#include <wordle/stateFromWord.h>
 
 #include <algorithm>
 #include <array>
@@ -11,53 +12,12 @@
 #include <limits>
 #include <mutex>
 #include <set>
+#include <stdexcept>
 #include <string>
 #include <unordered_set>
 #include <vector>
 
 namespace wordle {
-
-/**
- * @brief Given a correct word and a guessing word, calculates the color for each letter.
- *
- * Color is given as char array with numbers '0', '1', '2':
- *
- * '2': The letter is in the correct spot.
- * '1': The letter is in the word but in the wrong spot.
- * '0': The letter is not in the word in any spot.
- *
- * Note that there are a few special cases with repeated letters. E.g. for the correct word
- * "abcde" the guess "xaaxx" will result in "01000", so only the first 'a' gets a 1.
- *
- * This function is a bit tricky to get right, so beware! It has plenty of tests though.
- *
- * @param correctWord The correct word for which we are guessing.
- * @param guessWord A guessing word.
- * @return Char array with characters 0,1,2 to represent the matching state.
- */
-constexpr Word stateFromWord(Word const& correctWord, Word const& guessWord) {
-    auto state = Word();
-    auto counts = std::array<uint8_t, 'z' - 'a' + 1>();
-
-    for (int i = 0; i < NumCharacters; ++i) {
-        if (guessWord[i] == correctWord[i]) {
-            // got the correct letter!
-            state[i] = '2';
-        } else {
-            ++counts[correctWord[i]];
-            state[i] = '0';
-        }
-    }
-
-    for (int i = 0; i < NumCharacters; ++i) {
-        if (guessWord[i] != correctWord[i] && counts[guessWord[i]]) {
-            state[i] = '1';
-            --counts[guessWord[i]];
-        }
-    }
-
-    return state;
-}
 
 /**
  * @brief Reads & filters a dictionary file with newline separated words.
@@ -76,7 +36,6 @@ std::vector<Word> readAndFilterDictionary(std::filesystem::path filename) {
     }
     return parseDict(fin);
 }
-
 
 /**
  * @brief Fast map from alphabet 'a'..'z' to a value
@@ -137,16 +96,28 @@ public:
             throw std::runtime_error("incorrect number of letters");
         }
 
-        Word word{};
-        Word state{};
+        auto word = Word();
+        auto state = State();
         for (size_t i = 0; i < NumCharacters; ++i) {
             word[i] = wordAndState[i] - 'a';
-            state[i] = wordAndState[i + NumCharacters];
+            switch (wordAndState[i + NumCharacters]) {
+            case '0':
+                state[i] = St::not_included;
+                break;
+            case '1':
+                state[i] = St::wrong_spot;
+                break;
+            case '2':
+                state[i] = St::correct;
+                break;
+            default:
+                throw std::runtime_error("invalid state character");
+            }
         }
         addWordAndState(word, state);
     }
 
-    void addWordAndState(Word const& word, Word const& state) {
+    void addWordAndState(Word const& word, State const& state) {
 #if 0
         std::cout << "addWordAndState: " << word << " " << state << ", mandatory='"
                   << toString(m_mandatoryCharsForSearch, m_numMandatoryCharsForSearch) << "'" << std::endl;
@@ -154,7 +125,7 @@ public:
         auto newMandatoryChars = AlphabetMap<uint8_t>();
         for (size_t charIdx = 0; charIdx < NumCharacters; ++charIdx) {
             // correct=shark, guess=zanza, state=01000
-            if ('0' == state[charIdx]) {
+            if (St::not_included == state[charIdx]) {
                 if (newMandatoryChars[word[charIdx]]) {
                     // can only set this to false, earlier that character has already appeared as a 1, so it has to be
                     // somewhere else
@@ -167,7 +138,7 @@ public:
                         ac[word[charIdx]] = false;
                     }
                 }
-            } else if ('1' == state[charIdx]) {
+            } else if (St::wrong_spot == state[charIdx]) {
                 // letter word[i] exists, but not at this place
                 m_allowedCharPerLetter[charIdx][word[charIdx]] = false;
                 ++newMandatoryChars[word[charIdx]];
@@ -177,7 +148,7 @@ public:
         // do this *after* the other loops, so when 2 same are there and one matches and the other is not here, so that
         // this works
         for (size_t charIdx = 0; charIdx < NumCharacters; ++charIdx) {
-            if ('2' == state[charIdx]) {
+            if (St::correct == state[charIdx]) {
                 // letter found! reset all letters
                 m_allowedCharPerLetter[charIdx] = {};
                 m_allowedCharPerLetter[charIdx][word[charIdx]] = true;
@@ -391,64 +362,6 @@ struct Result {
     }
 };
 
-template <typename ElementIterator>
-class IterateMultiple {
-    using ContainerIterators = std::vector<std::pair<ElementIterator, ElementIterator>>;
-    ContainerIterators m_beginEndIters{};
-
-public:
-    class It {
-        ElementIterator m_elementIter{};
-        typename ContainerIterators::const_iterator m_containerIter{};
-
-    public:
-        constexpr It(ElementIterator elementIter, typename ContainerIterators::const_iterator containerIter)
-            : m_elementIter(elementIter)
-            , m_containerIter(containerIter) {}
-
-        constexpr auto operator*() const {
-            return *m_elementIter;
-        }
-
-        constexpr It& operator++() {
-            if (++m_elementIter == m_containerIter->second) {
-                ++m_containerIter;
-                m_elementIter = m_containerIter->first;
-            }
-            return *this;
-        }
-
-        constexpr bool operator==(It const& other) const {
-            return m_containerIter == other.m_containerIter && m_elementIter == other.m_elementIter;
-        }
-
-        constexpr bool operator!=(It const& other) const {
-            return !(*this == other);
-        }
-    };
-
-    IterateMultiple() {
-        // add sentinel
-        m_beginEndIters.emplace_back();
-    }
-
-    IterateMultiple& add(ElementIterator begin, ElementIterator end) {
-        m_beginEndIters.pop_back();
-        m_beginEndIters.emplace_back(begin, end);
-        m_beginEndIters.emplace_back();
-        return *this;
-    }
-
-    It begin() const {
-        return {m_beginEndIters.front().first, m_beginEndIters.begin()};
-    }
-
-    It end() const {
-        auto backIt = m_beginEndIters.end();
-        return {{}, --backIt};
-    }
-};
-
 enum class Player : bool { maxi, mini };
 
 namespace alphabeta {
@@ -543,7 +456,7 @@ Result maxi(Node const& node, Word const& guessWord, size_t currentDepth, size_t
             }
             nextNode.m_remainingCorrectWords = &filteredWords;
             value = mini(nextNode, currentDepth + 1, maxDepth, alpha, beta);
-            maxFilteredCorrectWords  = std::max(maxFilteredCorrectWords, filteredWords.size());
+            maxFilteredCorrectWords = std::max(maxFilteredCorrectWords, filteredWords.size());
         }
 
         if (value.m_fitness > bestValue.m_fitness) {
@@ -633,16 +546,6 @@ by Martin Leitner-Ankerl 2022
  */
 namespace wordle::test {
 
-constexpr Word stateFromWord(std::string_view correctWord, std::string_view guessWord) {
-    Word wa{};
-    Word wb{};
-    for (size_t i = 0; i < NumCharacters; ++i) {
-        wa[i] = correctWord[i] - 'a';
-        wb[i] = guessWord[i] - 'a';
-    }
-    return wordle::stateFromWord(wa, wb);
-}
-
 constexpr Word toStateWord(std::string_view str) {
     Word w{};
     for (size_t i = 0; i < str.size(); ++i) {
@@ -650,33 +553,5 @@ constexpr Word toStateWord(std::string_view str) {
     }
     return w;
 }
-
-static_assert(stateFromWord("aacde", "aaaxx") == toStateWord("22000"));
-static_assert(stateFromWord("aacde", "aaxxx") == toStateWord("22000"));
-static_assert(stateFromWord("abcde", "aaxxx") == toStateWord("20000"));
-static_assert(stateFromWord("abcde", "xaaxx") == toStateWord("01000"));
-static_assert(stateFromWord("gouge", "bough") == toStateWord("02220"));
-static_assert(stateFromWord("gouge", "lento") == toStateWord("01001"));
-static_assert(stateFromWord("gouge", "raise") == toStateWord("00002"));
-static_assert(stateFromWord("jeans", "ashen") == toStateWord("11011"));
-static_assert(stateFromWord("jeans", "knelt") == toStateWord("01100"));
-static_assert(stateFromWord("jeans", "raise") == toStateWord("01011"));
-static_assert(stateFromWord("knoll", "pills") == toStateWord("00120"));
-static_assert(stateFromWord("lilac", "apian") == toStateWord("00120"));
-static_assert(stateFromWord("lilac", "mambo") == toStateWord("01000"));
-static_assert(stateFromWord("lilac", "stare") == toStateWord("00100"));
-static_assert(stateFromWord("panic", "chase") == toStateWord("10100"));
-static_assert(stateFromWord("panic", "chase") == toStateWord("10100"));
-static_assert(stateFromWord("panic", "magic") == toStateWord("02022"));
-static_assert(stateFromWord("panic", "rocky") == toStateWord("00100"));
-static_assert(stateFromWord("pleat", "becap") == toStateWord("01021"));
-static_assert(stateFromWord("pleat", "model") == toStateWord("00011"));
-static_assert(stateFromWord("pleat", "stele") == toStateWord("01210"));
-static_assert(stateFromWord("pleat", "trawl") == toStateWord("10101"));
-static_assert(stateFromWord("shark", "zanza") == toStateWord("01000"));
-static_assert(stateFromWord("solar", "abaca") == toStateWord("10000"));
-static_assert(stateFromWord("solar", "alaap") == toStateWord("01020"));
-static_assert(stateFromWord("solar", "alaap") == toStateWord("01020"));
-static_assert(stateFromWord("solar", "raise") == toStateWord("11010"));
 
 } // namespace wordle::test
