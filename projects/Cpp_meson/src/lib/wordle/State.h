@@ -8,7 +8,7 @@
 
 namespace wordle {
 
-enum class St : uint8_t { not_included, wrong_spot, correct };
+enum class St : uint8_t { unspecified, not_included, wrong_spot, correct };
 
 class State {
     std::array<St, NumCharacters> m_data{};

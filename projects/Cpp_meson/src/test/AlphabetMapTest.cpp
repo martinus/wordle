@@ -7,9 +7,9 @@
 namespace wordle {
 
 TEST_CASE("AlphabetMap-bool") {
-    auto bm = AlphabetMap<bool>();
+    auto bm = AlphabetMap<bool>(true);
     for (char c = 'a'; c != 'z'; ++c) {
-        CHECK(bm[c - 'a'] == false);
+        CHECK(bm[c - 'a'] == true);
     }
 }
 

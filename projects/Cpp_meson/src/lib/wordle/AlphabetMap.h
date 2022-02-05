@@ -11,9 +11,16 @@ namespace wordle {
  */
 template <typename Mapped>
 class AlphabetMap {
-    std::array<Mapped, 'z' - 'a' + 1> m_data{};
+    std::array<Mapped, 'z' - 'a' + 1> m_data;
 
 public:
+    constexpr AlphabetMap(Mapped val) {
+        m_data.fill(val);
+    }
+
+    constexpr AlphabetMap()
+        : m_data{} {}
+
     constexpr Mapped& operator[](char ch) {
         // no out of bounds check because this has to be very fast
         return m_data[ch];
@@ -22,6 +29,14 @@ public:
     constexpr Mapped const& operator[](char ch) const {
         // no out of bounds check because this has to be very fast
         return m_data[ch];
+    }
+
+    constexpr auto begin() {
+        return m_data.begin();
+    }
+
+    constexpr auto end() {
+        return m_data.end();
     }
 };
 

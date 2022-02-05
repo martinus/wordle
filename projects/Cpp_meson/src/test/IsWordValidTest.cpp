@@ -1,4 +1,5 @@
 #include <wordle/IsWordValid.h>
+#include <wordle/stateFromWord.h>
 #include <wordle_util.h>
 
 #include <doctest.h>
@@ -47,6 +48,36 @@ TEST_CASE("IsWordValid-shark") {
     CHECK(isWordValid("xxxax"_word));
     CHECK(!isWordValid("xxxxa"_word));
     // CHECK(!isWordValid("shaak"_word)); // not correct, only a single a is allowed, *NOT* 2
+}
+
+///////
+
+TEST_CASE("val") {
+    CHECK(!isWordValid("awake"_word, "00000"_state, "awake"_word));
+    CHECK(!isWordValid("awake"_word, "00000"_state, "focal"_word));
+    CHECK(isWordValid("awake"_word, "00000"_state, "floss"_word));
+
+    CHECK(isWordValid("abcde"_word, "02200"_state, "xbcxx"_word));
+    CHECK(!isWordValid("abcde"_word, "02200"_state, "xcbxx"_word));
+    CHECK(isWordValid("abcde"_word, "02200"_state, "bbcbc"_word));
+    CHECK(isWordValid("abcde"_word, "02200"_state, "xbcxx"_word));
+    CHECK(!isWordValid("abcde"_word, "02200"_state, "xxcxx"_word));
+    CHECK(!isWordValid("abcde"_word, "02200"_state, "xbcxa"_word));
+    CHECK(isWordValid("abcde"_word, "02200"_state, "xbcxb"_word));
+    CHECK(isWordValid("abcde"_word, "02200"_state, "xbcxc"_word)); // there could be another c, we don't know yet
+    CHECK(!isWordValid("abcde"_word, "02200"_state, "xbcxd"_word));
+    CHECK(!isWordValid("abcde"_word, "02200"_state, "xbcxe"_word));
+    CHECK(!isWordValid("abcde"_word, "02200"_state, "ebcxx"_word));
+
+    CHECK(!isWordValid("abcde"_word, "00010"_state, "abcde"_word));
+
+    CHECK(isWordValid("zanza"_word, "01000"_state, "shark"_word));
+    CHECK(!isWordValid("zanza"_word, "01000"_state, "quiet"_word));
+    CHECK(isWordValid("zanza"_word, "01000"_state, "axxxx"_word));
+    CHECK(!isWordValid("zanza"_word, "01000"_state, "xaxxx"_word));
+    CHECK(isWordValid("zanza"_word, "01000"_state, "xxaxx"_word));
+    CHECK(isWordValid("zanza"_word, "01000"_state, "xxxax"_word));
+    CHECK(!isWordValid("zanza"_word, "01000"_state, "xxxxa"_word));
 }
 
 } // namespace wordle
