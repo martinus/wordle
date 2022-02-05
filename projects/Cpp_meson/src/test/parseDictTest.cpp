@@ -4,7 +4,6 @@
 #include <doctest.h>
 
 #include <fstream>
-#include <stdexcept>
 
 namespace wordle {
 

@@ -1,5 +1,6 @@
 lib_sources = [
     'wordle/parseDict.cpp',
+    'wordle/State.cpp',
     'wordle/Word.cpp',
 ]
 

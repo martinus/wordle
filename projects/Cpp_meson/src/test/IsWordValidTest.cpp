@@ -1,8 +1,12 @@
+#include "wordle/Word.h"
 #include <wordle/IsWordValid.h>
+#include <wordle/parseDict.h>
 #include <wordle/stateFromWord.h>
 #include <wordle_util.h>
 
 #include <doctest.h>
+
+#include <fstream>
 
 namespace wordle {
 
@@ -52,6 +56,11 @@ TEST_CASE("IsWordValid-shark") {
 
 ///////
 
+constexpr bool isWordValid(Word const& guessWord, State const& state, Word const& checkWord) {
+    auto b = IsSingleWordValid(guessWord, state);
+    return b(checkWord);
+}
+
 TEST_CASE("val") {
     CHECK(!isWordValid("awake"_word, "00000"_state, "awake"_word));
     CHECK(!isWordValid("awake"_word, "00000"_state, "focal"_word));
@@ -78,6 +87,77 @@ TEST_CASE("val") {
     CHECK(isWordValid("zanza"_word, "01000"_state, "xxaxx"_word));
     CHECK(isWordValid("zanza"_word, "01000"_state, "xxxax"_word));
     CHECK(!isWordValid("zanza"_word, "01000"_state, "xxxxa"_word));
+}
+
+namespace {
+
+template <typename Op>
+void forAllStates(Op&& op) {
+    static_assert(NumCharacters == 5);
+    // 3^5 == 243
+    State s;
+    for (unsigned val = 0; val < 243; ++val) {
+        auto v = val;
+        for (int i = 0; i < NumCharacters; ++i) {
+            switch (v % 3) {
+            case 0:
+                s[i] = St::not_included;
+                break;
+
+            case 1:
+                s[i] = St::wrong_spot;
+                break;
+            case 2:
+                s[i] = St::correct;
+                break;
+            }
+            v /= 3;
+        }
+        op(s);
+    }
+}
+
+} // namespace
+
+TEST_CASE("forAllStates") {
+    std::vector<State> states;
+    forAllStates([&](State const& state) {
+        states.push_back(state);
+    });
+
+    REQUIRE(states.size() == 243);
+    CHECK(states.front() == "00000"_state);
+    CHECK(states.back() == "22222"_state);
+    CHECK(states[1] == "10000"_state);
+    CHECK(states[2] == "20000"_state);
+    CHECK(states[3] == "01000"_state);
+    CHECK(states[4] == "11000"_state);
+}
+
+// don't run that test, it takes ~18 minutes in release mode
+TEST_CASE("isWordValid-bruteforce" * doctest::skip()) {
+    auto fin = std::ifstream(WORDLE_DATA_DIR "/data/en_allowed.txt");
+    auto allowedWords = wordle::parseDict(fin);
+
+    fin = std::ifstream(WORDLE_DATA_DIR "/data/en_correct.txt");
+    auto correctWords = wordle::parseDict(fin);
+
+    for (auto const& correctWord : correctWords) {
+        for (auto const& guessWord : correctWords) {
+            auto state = stateFromWord(correctWord, guessWord);
+            auto checker = IsWordValid();
+            checker.addWordAndState(guessWord, state);
+
+            for (auto const& checkWord : allowedWords) {
+                bool v1 = checker(checkWord);
+                bool v2 = isWordValid(guessWord, state, checkWord);
+                if (v1 != v2) {
+                    INFO(guessWord, " ", state, " ", checkWord);
+                    CHECK(v1 == v2);
+                }
+            }
+        }
+    }
 }
 
 } // namespace wordle
