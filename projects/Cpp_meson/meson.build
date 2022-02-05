@@ -1,7 +1,7 @@
-# gerate with
+# generate with
 #
-# CXX=clang++ meson setup --buildtype release build/clang_release
-# CXX=clang++ meson setup build/clang_debug
+# CXX="ccache clang++" meson setup --buildtype release build/clang_release
+# CXX="ccache clang++" meson setup build/clang_debug
 # meson setup --buildtype release build/g++_release
 # meson setup build/g++_debug
 

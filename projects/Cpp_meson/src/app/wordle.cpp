@@ -14,24 +14,6 @@
 namespace wordle {
 
 /**
- * @brief Reads & filters a dictionary file with newline separated words.
- *
- * Words are separated by '\n'. All are lowercase, exactly numCharacters long, sorted, and unique. No special characters.
- * Read in any dictionary file. This lowercases all words, and filters all out that don't have 5 characters or any special
- * character.
- *
- * @param filename Dictionary filename
- * @return std::string One string with all lowercase concatenated words (without any separator).
- */
-std::vector<Word> readAndFilterDictionary(std::filesystem::path filename) {
-    auto fin = std::ifstream(filename);
-    if (!fin.is_open()) {
-        throw std::runtime_error("Could not open " + filename.string());
-    }
-    return parseDict(fin);
-}
-
-/**
  * @brief Fitness score of a guess word. The lower, the better.
  */
 struct Fitness {
@@ -263,6 +245,24 @@ std::pair<Word, State> parseWordAndState(std::string_view wordAndState) {
         }
     }
     return std::make_pair(word, state);
+}
+
+/**
+ * @brief Reads & filters a dictionary file with newline separated words.
+ *
+ * Words are separated by '\n'. All are lowercase, exactly numCharacters long, sorted, and unique. No special characters.
+ * Read in any dictionary file. This lowercases all words, and filters all out that don't have 5 characters or any special
+ * character.
+ *
+ * @param filename Dictionary filename
+ * @return std::string One string with all lowercase concatenated words (without any separator).
+ */
+std::vector<Word> readAndFilterDictionary(std::filesystem::path filename) {
+    auto fin = std::ifstream(filename);
+    if (!fin.is_open()) {
+        throw std::runtime_error("Could not open " + filename.string());
+    }
+    return parseDict(fin);
 }
 
 } // namespace wordle
