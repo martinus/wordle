@@ -1,4 +1,5 @@
 test_sources = [
+    'AlphabetMapTest.cpp',
     'main.cpp',
     'parseDictTest.cpp',
     'stateFromWordTest.cpp',

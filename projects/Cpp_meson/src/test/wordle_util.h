@@ -7,6 +7,13 @@
 
 namespace wordle {
 
+/**
+ * @brief Creates a word from string input
+ * 
+ * @param str 
+ * @param s 
+ * @return constexpr Word 
+ */
 constexpr Word operator""_word(char const* str, size_t s) {
     auto w = Word();
     if (s != w.size()) {

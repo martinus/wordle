@@ -1,21 +1,15 @@
 #include <util/parallel/for_each.h>
+#include <wordle/AlphabetMap.h>
 #include <wordle/Word.h>
 #include <wordle/parseDict.h>
 #include <wordle/stateFromWord.h>
 
 #include <algorithm>
-#include <array>
-#include <cstring> // memcpy
 #include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <limits>
 #include <mutex>
-#include <set>
-#include <stdexcept>
-#include <string>
-#include <unordered_set>
-#include <vector>
 
 namespace wordle {
 
@@ -35,39 +29,6 @@ std::vector<Word> readAndFilterDictionary(std::filesystem::path filename) {
         throw std::runtime_error("Could not open " + filename.string());
     }
     return parseDict(fin);
-}
-
-/**
- * @brief Fast map from alphabet 'a'..'z' to a value
- *
- * Since the number of possible values is very small (and fixed), this can be optimized well.
- */
-template <typename Mapped>
-class AlphabetMap {
-    std::array<Mapped, 'z' - 'a' + 1> m_data{};
-
-public:
-    constexpr Mapped& operator[](char ch) {
-        // no out of bounds check because this has to be very fast
-        return m_data[ch];
-    }
-
-    constexpr Mapped const& operator[](char ch) const {
-        // no out of bounds check because this has to be very fast
-        return m_data[ch];
-    }
-};
-
-// for each spot check which letters are still allowed
-// create set of characters that need to be there
-
-template <size_t N>
-std::string toString(std::array<char, N> const& x, size_t s) {
-    std::string str;
-    for (size_t i = 0; i < s; ++i) {
-        str.push_back(x[i] + 'a');
-    }
-    return str;
 }
 
 /**
@@ -167,32 +128,6 @@ public:
         }
     }
 
-    void debugPrint() const {
-        for (char ch = 'a'; ch <= 'z'; ++ch) {
-            std::cout << ch;
-        }
-        std::cout << std::endl;
-        for (char ch = 'a'; ch <= 'z'; ++ch) {
-            std::cout << '-';
-        }
-        std::cout << std::endl;
-
-        for (int i = 0; i < NumCharacters; ++i) {
-            for (char ch = 'a'; ch <= 'z'; ++ch) {
-                if (m_allowedCharPerLetter[i][ch]) {
-                    std::cout << ch;
-                } else {
-                    std::cout << ".";
-                }
-            }
-            std::cout << std::endl;
-        }
-        for (char ch = 'a'; ch <= 'z'; ++ch) {
-            std::cout << '-';
-        }
-        std::cout << " " << m_mandatoryCharsForSearch.data() << std::endl;
-    }
-
     /**
      * True if the given word is acceptable based on the current wordle state.
      *
@@ -223,45 +158,12 @@ public:
         }
         return true;
     }
-
-    /**
-     * @brief Walks through all words and creates a list of ones that could match.
-     *
-     * This is highly performance critical!
-     */
-    template <typename Op>
-    constexpr bool eachValidWord(std::vector<Word> const& allWords, Op&& op) const {
-        for (Word const& word : allWords) {
-            if (!isWordValid(word)) {
-                // not valid, continue with next word
-                continue;
-            }
-
-            // convenience: when op returns bool use this, otherwise just call it
-            if constexpr (std::is_same_v<void, std::invoke_result_t<Op, std::string_view>>) {
-                op(word);
-            } else {
-                if (!op(word)) {
-                    return false;
-                }
-            }
-        }
-        return true;
-    }
 };
-
-std::string toString(Word const& word) {
-    std::string str;
-    for (auto ch : word) {
-        str += ch + 'a';
-    }
-    return str;
-}
 
 void showWords(std::vector<Word> const& words) {
     auto prefix = "";
     for (Word const& word : words) {
-        std::cout << prefix << toString(word);
+        std::cout << prefix << word;
         prefix = " ";
     }
     std::cout << std::endl;
@@ -392,7 +294,7 @@ Result mini(Node& node, size_t currentDepth, size_t maxDepth, Fitness alpha, Fit
                     bestValue.m_fitness = value.m_fitness;
                     bestValue.m_guessWord = guessWord;
 
-                    std::cout << currentDepth << ": \"" << toString(guessWord) << "\" alpha=" << alpha.maxCount
+                    std::cout << currentDepth << ": \"" << guessWord << "\" alpha=" << alpha.maxCount
                               << ", beta=" << beta.maxCount << ", fitness=" << value.m_fitness << std::endl;
                 }
 
@@ -524,7 +426,7 @@ by Martin Leitner-Ankerl 2022
     for (auto word : wordsCorrect) {
         if (pre.isWordValid(word)) {
             filteredCorrectWords.push_back(word);
-            std::cout << wordle::toString(word) << " ";
+            std::cout << word << " ";
         }
     }
     std::cout << std::endl;
@@ -538,7 +440,7 @@ by Martin Leitner-Ankerl 2022
     size_t maxDepth = 4;
     auto bestResult = wordle::alphabeta::mini(node, currentDepth, maxDepth, alpha, beta);
 
-    std::cout << bestResult.m_fitness << " " << wordle::toString(bestResult.m_guessWord) << std::endl;
+    std::cout << bestResult.m_fitness << " " << bestResult.m_guessWord << std::endl;
 }
 
 /**

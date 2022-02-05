@@ -1,46 +1,34 @@
 #include <wordle/stateFromWord.h>
 #include <wordle_util.h>
 
-#include <doctest.h>
-
 namespace wordle {
 
-constexpr State stateFromWord(std::string_view correctWord, std::string_view guessWord) {
-    Word wa{};
-    Word wb{};
-    for (size_t i = 0; i < NumCharacters; ++i) {
-        wa[i] = correctWord[i] - 'a';
-        wb[i] = guessWord[i] - 'a';
-    }
-    return wordle::stateFromWord(wa, wb);
-}
-
-static_assert(stateFromWord("aacde", "aaaxx") == "22000"_state);
-static_assert(stateFromWord("aacde", "aaxxx") == "22000"_state);
-static_assert(stateFromWord("abcde", "aaxxx") == "20000"_state);
-static_assert(stateFromWord("abcde", "xaaxx") == "01000"_state);
-static_assert(stateFromWord("gouge", "bough") == "02220"_state);
-static_assert(stateFromWord("gouge", "lento") == "01001"_state);
-static_assert(stateFromWord("gouge", "raise") == "00002"_state);
-static_assert(stateFromWord("jeans", "ashen") == "11011"_state);
-static_assert(stateFromWord("jeans", "knelt") == "01100"_state);
-static_assert(stateFromWord("jeans", "raise") == "01011"_state);
-static_assert(stateFromWord("knoll", "pills") == "00120"_state);
-static_assert(stateFromWord("lilac", "apian") == "00120"_state);
-static_assert(stateFromWord("lilac", "mambo") == "01000"_state);
-static_assert(stateFromWord("lilac", "stare") == "00100"_state);
-static_assert(stateFromWord("panic", "chase") == "10100"_state);
-static_assert(stateFromWord("panic", "chase") == "10100"_state);
-static_assert(stateFromWord("panic", "magic") == "02022"_state);
-static_assert(stateFromWord("panic", "rocky") == "00100"_state);
-static_assert(stateFromWord("pleat", "becap") == "01021"_state);
-static_assert(stateFromWord("pleat", "model") == "00011"_state);
-static_assert(stateFromWord("pleat", "stele") == "01210"_state);
-static_assert(stateFromWord("pleat", "trawl") == "10101"_state);
-static_assert(stateFromWord("shark", "zanza") == "01000"_state);
-static_assert(stateFromWord("solar", "abaca") == "10000"_state);
-static_assert(stateFromWord("solar", "alaap") == "01020"_state);
-static_assert(stateFromWord("solar", "alaap") == "01020"_state);
-static_assert(stateFromWord("solar", "raise") == "11010"_state);
+static_assert(stateFromWord("aacde"_word, "aaaxx"_word) == "22000"_state);
+static_assert(stateFromWord("aacde"_word, "aaxxx"_word) == "22000"_state);
+static_assert(stateFromWord("abcde"_word, "aaxxx"_word) == "20000"_state);
+static_assert(stateFromWord("abcde"_word, "xaaxx"_word) == "01000"_state);
+static_assert(stateFromWord("gouge"_word, "bough"_word) == "02220"_state);
+static_assert(stateFromWord("gouge"_word, "lento"_word) == "01001"_state);
+static_assert(stateFromWord("gouge"_word, "raise"_word) == "00002"_state);
+static_assert(stateFromWord("jeans"_word, "ashen"_word) == "11011"_state);
+static_assert(stateFromWord("jeans"_word, "knelt"_word) == "01100"_state);
+static_assert(stateFromWord("jeans"_word, "raise"_word) == "01011"_state);
+static_assert(stateFromWord("knoll"_word, "pills"_word) == "00120"_state);
+static_assert(stateFromWord("lilac"_word, "apian"_word) == "00120"_state);
+static_assert(stateFromWord("lilac"_word, "mambo"_word) == "01000"_state);
+static_assert(stateFromWord("lilac"_word, "stare"_word) == "00100"_state);
+static_assert(stateFromWord("panic"_word, "chase"_word) == "10100"_state);
+static_assert(stateFromWord("panic"_word, "chase"_word) == "10100"_state);
+static_assert(stateFromWord("panic"_word, "magic"_word) == "02022"_state);
+static_assert(stateFromWord("panic"_word, "rocky"_word) == "00100"_state);
+static_assert(stateFromWord("pleat"_word, "becap"_word) == "01021"_state);
+static_assert(stateFromWord("pleat"_word, "model"_word) == "00011"_state);
+static_assert(stateFromWord("pleat"_word, "stele"_word) == "01210"_state);
+static_assert(stateFromWord("pleat"_word, "trawl"_word) == "10101"_state);
+static_assert(stateFromWord("shark"_word, "zanza"_word) == "01000"_state);
+static_assert(stateFromWord("solar"_word, "abaca"_word) == "10000"_state);
+static_assert(stateFromWord("solar"_word, "alaap"_word) == "01020"_state);
+static_assert(stateFromWord("solar"_word, "alaap"_word) == "01020"_state);
+static_assert(stateFromWord("solar"_word, "raise"_word) == "11010"_state);
 
 } // namespace wordle
