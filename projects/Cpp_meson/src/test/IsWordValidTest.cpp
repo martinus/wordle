@@ -41,6 +41,11 @@ TEST_CASE("IsWordValid-shark") {
     isWordValid.addWordAndState("zanza"_word, "01000"_state);
     CHECK(isWordValid("shark"_word));
     CHECK(!isWordValid("quiet"_word));
+    CHECK(isWordValid("axxxx"_word));
+    CHECK(!isWordValid("xaxxx"_word));
+    CHECK(isWordValid("xxaxx"_word));
+    CHECK(isWordValid("xxxax"_word));
+    CHECK(!isWordValid("xxxxa"_word));
     // CHECK(!isWordValid("shaak"_word)); // not correct, only a single a is allowed, *NOT* 2
 }
 

@@ -10,6 +10,11 @@
 
 namespace wordle {
 
+/**
+ * @brief Given a current state of rules, checks if a word is still allowed.
+ *
+ * This has to be really fast! Both for checking, and for adding words & states.
+ */
 class IsWordValid {
     std::array<AlphabetMap<bool>, NumCharacters> m_allowedCharPerLetter{};
     AlphabetMap<uint8_t> m_mandatoryCharCount{};
