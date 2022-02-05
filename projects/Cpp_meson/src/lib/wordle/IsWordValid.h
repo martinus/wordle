@@ -27,7 +27,7 @@ public:
         }
     }
 
-    void addWordAndState(Word const& word, State const& state) {
+    IsWordValid& addWordAndState(Word const& word, State const& state) {
 #if 0
         std::cout << "addWordAndState: " << word << " " << state << ", mandatory='"
                   << toString(m_mandatoryCharsForSearch, m_numMandatoryCharsForSearch) << "'" << std::endl;
@@ -75,6 +75,8 @@ public:
                 ++m_numMandatoryCharsForSearch;
             }
         }
+
+        return *this;
     }
 
     /**
