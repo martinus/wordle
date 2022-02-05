@@ -1,10 +1,11 @@
 #include <util/parallel/for_each.h>
 #include <wordle/AlphabetMap.h>
-#include <wordle/IsWordValid.h>
+#include <wordle/IsSingleWordValid.h>
 #include <wordle/Word.h>
 #include <wordle/parseDict.h>
 #include <wordle/stateFromWord.h>
 
+#include <algorithm>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -89,12 +90,6 @@ struct Results {
 };
 */
 
-struct Node {
-    IsWordValid m_isWordValid;
-    std::vector<Word>* m_allowedWordsToEnter;
-    std::vector<Word>* m_remainingCorrectWords;
-};
-
 struct Result {
     Fitness m_fitness = Fitness::maxi();
     Word m_guessWord{};
@@ -114,13 +109,30 @@ namespace alphabeta {
 
 // see https://en.wikipedia.org/wiki/Alpha%E2%80%93beta_pruning#Pseudocode
 
-Result maxi(Node const& node, Word const& guessWord, size_t currentDepth, size_t maxDepth, Fitness alpha, Fitness beta);
-Result mini(Node& node, size_t currentDepth, size_t maxDepth, Fitness alpha, Fitness beta);
+Result maxi(std::vector<Word> const& allowedWordsToEnter,
+            std::vector<Word> const& remainingCorrectWords,
+            Word const& guessWord,
+            size_t currentDepth,
+            size_t maxDepth,
+            Fitness alpha,
+            Fitness beta);
+
+Result mini(std::vector<Word> const& allowedWordsToEnter,
+            std::vector<Word> const& remainingCorrectWords,
+            size_t currentDepth,
+            size_t maxDepth,
+            Fitness alpha,
+            Fitness beta);
 
 // mini: wants to make a guess that lowers the number of remaining correct words as much as possible
-Result mini(Node& node, size_t currentDepth, size_t maxDepth, Fitness alpha, Fitness beta) {
-    if (node.m_remainingCorrectWords->size() == 1) {
-        return Result{Fitness{0, currentDepth}, node.m_remainingCorrectWords->front()};
+Result mini(std::vector<Word> const& allowedWordsToEnter,
+            std::vector<Word> const& remainingCorrectWords,
+            size_t currentDepth,
+            size_t maxDepth,
+            Fitness alpha,
+            Fitness beta) {
+    if (remainingCorrectWords.size() == 1) {
+        return Result{Fitness{0, currentDepth}, remainingCorrectWords.front()};
     }
 
     auto bestValue = Result::maxi();
@@ -128,31 +140,30 @@ Result mini(Node& node, size_t currentDepth, size_t maxDepth, Fitness alpha, Fit
     if (currentDepth == 0) {
         // depth 0: run loop in parallel
         auto mutex = std::mutex();
-        ankerl::parallel::for_each(
-            node.m_allowedWordsToEnter->begin(), node.m_allowedWordsToEnter->end(), [&](Word const& guessWord) {
-                auto value = maxi(node, guessWord, currentDepth + 1, maxDepth, alpha, beta);
+        ankerl::parallel::for_each(allowedWordsToEnter.begin(), allowedWordsToEnter.end(), [&](Word const& guessWord) {
+            auto value = maxi(allowedWordsToEnter, remainingCorrectWords, guessWord, currentDepth + 1, maxDepth, alpha, beta);
 
-                auto lock = std::lock_guard(mutex);
+            auto lock = std::lock_guard(mutex);
 
-                if (value.m_fitness < bestValue.m_fitness) {
-                    bestValue.m_fitness = value.m_fitness;
-                    bestValue.m_guessWord = guessWord;
+            if (value.m_fitness < bestValue.m_fitness) {
+                bestValue.m_fitness = value.m_fitness;
+                bestValue.m_guessWord = guessWord;
 
-                    std::cout << currentDepth << ": \"" << guessWord << "\" alpha=" << alpha.maxCount
-                              << ", beta=" << beta.maxCount << ", fitness=" << value.m_fitness << std::endl;
-                }
+                std::cout << currentDepth << ": \"" << guessWord << "\" alpha=" << alpha.maxCount << ", beta=" << beta.maxCount
+                          << ", fitness=" << value.m_fitness << std::endl;
+            }
 
-                if (bestValue.m_fitness <= alpha) {
-                    // alpha cutoff, stop iterating
-                    return ankerl::parallel::Continue::no;
-                }
-                beta = std::min(beta, bestValue.m_fitness);
-                // continue iterating
-                return ankerl::parallel::Continue::yes;
-            });
+            if (bestValue.m_fitness <= alpha) {
+                // alpha cutoff, stop iterating
+                return ankerl::parallel::Continue::no;
+            }
+            beta = std::min(beta, bestValue.m_fitness);
+            // continue iterating
+            return ankerl::parallel::Continue::yes;
+        });
     } else {
-        for (Word const& guessWord : *node.m_allowedWordsToEnter) {
-            auto value = maxi(node, guessWord, currentDepth + 1, maxDepth, alpha, beta);
+        for (Word const& guessWord : allowedWordsToEnter) {
+            auto value = maxi(allowedWordsToEnter, remainingCorrectWords, guessWord, currentDepth + 1, maxDepth, alpha, beta);
 
             if (value.m_fitness < bestValue.m_fitness) {
                 bestValue.m_fitness = value.m_fitness;
@@ -171,14 +182,19 @@ Result mini(Node& node, size_t currentDepth, size_t maxDepth, Fitness alpha, Fit
 }
 
 // maxi: wants to find the most hard to guess "correct" word
-Result maxi(Node const& node, Word const& guessWord, size_t currentDepth, size_t maxDepth, Fitness alpha, Fitness beta) {
+Result maxi(std::vector<Word> const& allowedWordsToEnter,
+            std::vector<Word> const& remainingCorrectWords,
+            Word const& guessWord,
+            size_t currentDepth,
+            size_t maxDepth,
+            Fitness alpha,
+            Fitness beta) {
     Result bestValue = Result::mini();
     auto maxFilteredCorrectWords = size_t();
-    for (Word const& correctWord : *node.m_remainingCorrectWords) {
+    for (Word const& correctWord : remainingCorrectWords) {
         // create information for the next node
-        auto nextNode = node;
         auto state = stateFromWord(correctWord, guessWord);
-        nextNode.m_isWordValid.addWordAndState(guessWord, state);
+        auto isWordValid = IsSingleWordValid(guessWord, state);
 
         // create a new list of remaining correct words
         auto value = Result();
@@ -187,21 +203,20 @@ Result maxi(Node const& node, Word const& guessWord, size_t currentDepth, size_t
             value.m_fitness.maxCount = 0;
             value.m_fitness.depth = currentDepth;
 
-            for (Word const& word : *node.m_remainingCorrectWords) {
-                if (nextNode.m_isWordValid(word) && guessWord != word) {
+            for (Word const& word : remainingCorrectWords) {
+                if (isWordValid(word) && guessWord != word) {
                     ++value.m_fitness.maxCount;
                 }
             }
         } else {
             // we have to go deeper
             auto filteredWords = std::vector<Word>();
-            for (Word const& word : *node.m_remainingCorrectWords) {
-                if (nextNode.m_isWordValid(word) && guessWord != word) {
+            for (Word const& word : remainingCorrectWords) {
+                if (isWordValid(word) && guessWord != word) {
                     filteredWords.push_back(word);
                 }
             }
-            nextNode.m_remainingCorrectWords = &filteredWords;
-            value = mini(nextNode, currentDepth + 1, maxDepth, alpha, beta);
+            value = mini(allowedWordsToEnter, filteredWords, currentDepth + 1, maxDepth, alpha, beta);
             maxFilteredCorrectWords = std::max(maxFilteredCorrectWords, filteredWords.size());
         }
 
@@ -301,11 +316,10 @@ by Martin Leitner-Ankerl 2022
     auto allowedWords = wordle::readAndFilterDictionary(prefix + "_allowed.txt");
     auto wordsCorrect = wordle::readAndFilterDictionary(prefix + "_correct.txt");
 
-    auto isWordValid = wordle::IsWordValid();
-
+    auto validators = std::vector<wordle::IsSingleWordValid>();
     for (int i = 2; i < argc; ++i) {
         auto [word, state] = wordle::parseWordAndState(argv[i]);
-        isWordValid.addWordAndState(word, state);
+        validators.emplace_back(word, state);
     }
 
     // pre.debugPrint();
@@ -313,21 +327,22 @@ by Martin Leitner-Ankerl 2022
     // create list of words that are currently valid
     auto filteredCorrectWords = std::vector<wordle::Word>();
     for (auto word : wordsCorrect) {
-        if (isWordValid(word)) {
+        auto it = std::find_if_not(validators.begin(), validators.end(), [&](auto const& validator) {
+            return validator(word);
+        });
+        if (it == validators.end()) {
             filteredCorrectWords.push_back(word);
             std::cout << word << " ";
         }
     }
     std::cout << std::endl;
 
-    auto node = wordle::Node{isWordValid, &allowedWords, &filteredCorrectWords};
-
     auto alpha = wordle::Fitness::mini();
     auto beta = wordle::Fitness::maxi();
     // auto beta = wordle::Fitness{2, 4};
     size_t currentDepth = 0;
     size_t maxDepth = 4;
-    auto bestResult = wordle::alphabeta::mini(node, currentDepth, maxDepth, alpha, beta);
+    auto bestResult = wordle::alphabeta::mini(allowedWords, filteredCorrectWords, currentDepth, maxDepth, alpha, beta);
 
     std::cout << bestResult.m_fitness << " " << bestResult.m_guessWord << std::endl;
 }

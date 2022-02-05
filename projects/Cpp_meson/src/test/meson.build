@@ -1,6 +1,6 @@
 test_sources = [
     'AlphabetMapTest.cpp',
-    'IsWordValidTest.cpp',
+    'IsSingleWordValidTest.cpp',
     'main.cpp',
     'parseDictTest.cpp',
     'stateFromWordTest.cpp',

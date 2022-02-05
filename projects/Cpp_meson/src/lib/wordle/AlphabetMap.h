@@ -1,6 +1,7 @@
 #pragma once
 
 #include <array>
+#include <cstddef>
 
 namespace wordle {
 
@@ -11,11 +12,14 @@ namespace wordle {
  */
 template <typename Mapped>
 class AlphabetMap {
-    std::array<Mapped, 'z' - 'a' + 1> m_data;
+    std::array<Mapped, 'z' - 'a' + 1> m_data{};
 
 public:
     constexpr AlphabetMap(Mapped val) {
-        m_data.fill(val);
+        // m_data.fill(val); // fill is not constexpr :-(
+        for (auto i = size_t(); i < m_data.size(); ++i) {
+            m_data[i] = val;
+        }
     }
 
     constexpr AlphabetMap()
