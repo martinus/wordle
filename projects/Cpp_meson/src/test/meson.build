@@ -1,5 +1,6 @@
 test_sources = [
     'AlphabetMapTest.cpp',
+    'IsWordValidTest.cpp',
     'main.cpp',
     'parseDictTest.cpp',
     'stateFromWordTest.cpp',
@@ -15,5 +16,9 @@ test_exe = executable(
     link_with: wordle_lib
 )
 
-test('wordle test', test_exe)
+test(
+    'wordle test',
+    test_exe,
+    # verbose: true # only meson 0.62
+)
 
