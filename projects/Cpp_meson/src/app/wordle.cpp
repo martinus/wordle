@@ -35,7 +35,7 @@ std::vector<Word> readAndFilterDictionary(std::filesystem::path filename) {
  * Based on several words & states,
  *
  */
-class Preconditions {
+class IsWordValid {
     std::array<AlphabetMap<bool>, NumCharacters> m_allowedCharPerLetter{};
     AlphabetMap<uint8_t> m_mandatoryCharCount{};
 
@@ -43,7 +43,7 @@ class Preconditions {
     size_t m_numMandatoryCharsForSearch{};
 
 public:
-    Preconditions() {
+    IsWordValid() {
         // initially, all letters are allowed
         for (char ch = 0; ch <= 'z' - 'a'; ++ch) {
             for (auto& ac : m_allowedCharPerLetter) {
@@ -135,7 +135,7 @@ public:
      *
      * @param word The word to check
      */
-    bool isWordValid(Word const& word) const {
+    bool operator()(Word const& word) const {
         // check allowed characters
         for (int i = 0; i < NumCharacters; ++i) {
             if (!m_allowedCharPerLetter[i][word[i]]) {
@@ -246,7 +246,7 @@ struct Results {
 */
 
 struct Node {
-    Preconditions m_pre;
+    IsWordValid m_isWordValid;
     std::vector<Word>* m_allowedWordsToEnter;
     std::vector<Word>* m_remainingCorrectWords;
 };
@@ -334,7 +334,7 @@ Result maxi(Node const& node, Word const& guessWord, size_t currentDepth, size_t
         // create information for the next node
         auto nextNode = node;
         auto state = stateFromWord(correctWord, guessWord);
-        nextNode.m_pre.addWordAndState(guessWord, state);
+        nextNode.m_isWordValid.addWordAndState(guessWord, state);
 
         // create a new list of remaining correct words
         auto value = Result();
@@ -344,7 +344,7 @@ Result maxi(Node const& node, Word const& guessWord, size_t currentDepth, size_t
             value.m_fitness.depth = currentDepth;
 
             for (Word const& word : *node.m_remainingCorrectWords) {
-                if (nextNode.m_pre.isWordValid(word) && guessWord != word) {
+                if (nextNode.m_isWordValid(word) && guessWord != word) {
                     ++value.m_fitness.maxCount;
                 }
             }
@@ -352,7 +352,7 @@ Result maxi(Node const& node, Word const& guessWord, size_t currentDepth, size_t
             // we have to go deeper
             auto filteredWords = std::vector<Word>();
             for (Word const& word : *node.m_remainingCorrectWords) {
-                if (nextNode.m_pre.isWordValid(word) && guessWord != word) {
+                if (nextNode.m_isWordValid(word) && guessWord != word) {
                     filteredWords.push_back(word);
                 }
             }
@@ -413,10 +413,10 @@ by Martin Leitner-Ankerl 2022
     auto allowedWords = wordle::readAndFilterDictionary(prefix + "_allowed.txt");
     auto wordsCorrect = wordle::readAndFilterDictionary(prefix + "_correct.txt");
 
-    auto pre = wordle::Preconditions();
+    auto isWordValid = wordle::IsWordValid();
 
     for (int i = 2; i < argc; ++i) {
-        pre.addWordAndState(argv[i]);
+        isWordValid.addWordAndState(argv[i]);
     }
 
     // pre.debugPrint();
@@ -424,14 +424,14 @@ by Martin Leitner-Ankerl 2022
     // create list of words that are currently valid
     auto filteredCorrectWords = std::vector<wordle::Word>();
     for (auto word : wordsCorrect) {
-        if (pre.isWordValid(word)) {
+        if (isWordValid(word)) {
             filteredCorrectWords.push_back(word);
             std::cout << word << " ";
         }
     }
     std::cout << std::endl;
 
-    auto node = wordle::Node{pre, &allowedWords, &filteredCorrectWords};
+    auto node = wordle::Node{isWordValid, &allowedWords, &filteredCorrectWords};
 
     auto alpha = wordle::Fitness::mini();
     auto beta = wordle::Fitness::maxi();
