@@ -31,4 +31,10 @@ static_assert(stateFromWord("solar"_word, "alaap"_word) == "01020"_state);
 static_assert(stateFromWord("solar"_word, "alaap"_word) == "01020"_state);
 static_assert(stateFromWord("solar"_word, "raise"_word) == "11010"_state);
 
+static_assert(stateFromWord("basic"_word, "rayne"_word) == "02000"_state);
+static_assert(stateFromWord("basic"_word, "humph"_word) == "00000"_state);
+
+static_assert(stateFromWord("chute"_word, "rayne"_word) == "00002"_state);
+static_assert(stateFromWord("chute"_word, "sluit"_word) == "00201"_state);
+
 } // namespace wordle

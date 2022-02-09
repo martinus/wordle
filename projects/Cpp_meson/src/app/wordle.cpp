@@ -18,38 +18,22 @@ namespace wordle {
  * @brief Fitness score of a guess word. The lower, the better.
  */
 struct Fitness {
-    /**
-     * Maximum number of remaining words that will remain when using this guessing word. This is evaluated against all words
-     * that can possibly be correct. This is the most important metric, because we want to optimize for the worst case to
-     * guarantee that we can reduce the set of possible words as much as possible.
-     */
-    size_t maxCount = 0;
+    // maximum number of remaining words for each level, but in reverse.
+    std::array<size_t, 3> m_maxCounts{};
 
-    /**
-     * Quadratic error of the number of remaining words. The lower the better, but first we optimize
-     * against the maximum. So when several words lead to the same maximum number of remaining words, we prefer the one where
-     * the sum of count^2 is minimum.
-     *
-     * NOTE: My gut says this is a reasonable heuristic, but I have nothing to prove this.
-     */
-    size_t depth = 0;
-
-    size_t numFilteredCorrectWords = 0;
+    constexpr size_t& operator[](size_t idx) {
+        return m_maxCounts[m_maxCounts.size() - idx - 1];
+    }
 
     constexpr static Fitness maxi() {
-        return {std::numeric_limits<size_t>::max(), std::numeric_limits<size_t>::max(), std::numeric_limits<size_t>::max()};
+        auto f = Fitness();
+        for (auto& x : f.m_maxCounts) {
+            x = std::numeric_limits<size_t>::max();
+        }
+        return f;
     }
     constexpr static Fitness mini() {
         return {};
-    }
-
-    /**
-     * @brief Helper to make use of tuple's comparisons
-     *
-     * @return constexpr auto
-     */
-    constexpr auto asTuple() const {
-        return std::tie(maxCount, depth, numFilteredCorrectWords);
     }
 
 private:
@@ -60,35 +44,32 @@ private:
 };
 
 std::ostream& operator<<(std::ostream& os, Fitness const& f) {
-    return os << "(maxCount=" << f.maxCount << ", depth=" << f.depth
-              << ", numFilteredCorrectWords=" << f.numFilteredCorrectWords << ")";
+    auto prefix = std::string_view("(");
+    std::for_each(f.m_maxCounts.rbegin(), f.m_maxCounts.rend(), [&](auto const& x) {
+        os << prefix << x;
+        prefix = ", ";
+    });
+    return os << ")";
 }
 
 constexpr bool operator<=(Fitness const& a, Fitness const& b) {
-    return a.asTuple() <= b.asTuple();
+    return a.m_maxCounts <= b.m_maxCounts;
 }
 constexpr bool operator<(Fitness const& a, Fitness const& b) {
-    return a.asTuple() < b.asTuple();
+    return a.m_maxCounts < b.m_maxCounts;
 }
 constexpr bool operator>=(Fitness const& a, Fitness const& b) {
-    return a.asTuple() >= b.asTuple();
+    return a.m_maxCounts >= b.m_maxCounts;
 }
 constexpr bool operator>(Fitness const& a, Fitness const& b) {
-    return a.asTuple() > b.asTuple();
+    return a.m_maxCounts > b.m_maxCounts;
 }
 constexpr bool operator==(Fitness const& a, Fitness const& b) {
-    return a.asTuple() == b.asTuple();
+    return a.m_maxCounts == b.m_maxCounts;
 }
 constexpr bool operator!=(Fitness const& a, Fitness const& b) {
-    return a.asTuple() != b.asTuple();
+    return a.m_maxCounts != b.m_maxCounts;
 }
-
-/*
-struct Results {
-    Fitness fitness = Fitness::worst();
-    std::vector<std::string_view> words{};
-};
-*/
 
 struct Result {
     Fitness m_fitness = Fitness::maxi();
@@ -141,7 +122,7 @@ Result mini(std::vector<Word> const& allowedWordsToEnter,
         // depth 0: run loop in parallel
         auto mutex = std::mutex();
         ankerl::parallel::for_each(allowedWordsToEnter.begin(), allowedWordsToEnter.end(), [&](Word const& guessWord) {
-            auto value = maxi(allowedWordsToEnter, remainingCorrectWords, guessWord, currentDepth + 1, maxDepth, alpha, beta);
+            auto value = maxi(allowedWordsToEnter, remainingCorrectWords, guessWord, currentDepth, maxDepth, alpha, beta);
 
             auto lock = std::lock_guard(mutex);
 
@@ -149,7 +130,7 @@ Result mini(std::vector<Word> const& allowedWordsToEnter,
                 bestValue.m_fitness = value.m_fitness;
                 bestValue.m_guessWord = guessWord;
 
-                std::cout << currentDepth << ": \"" << guessWord << "\" alpha=" << alpha.maxCount << ", beta=" << beta.maxCount
+                std::cout << currentDepth << ": \"" << guessWord << "\" alpha=" << alpha << ", beta=" << beta
                           << ", fitness=" << value.m_fitness << std::endl;
             }
 
@@ -160,10 +141,10 @@ Result mini(std::vector<Word> const& allowedWordsToEnter,
             beta = std::min(beta, bestValue.m_fitness);
             // continue iterating
             return ankerl::parallel::Continue::yes;
-        });
+        } /*, 1*/);
     } else {
         for (Word const& guessWord : allowedWordsToEnter) {
-            auto value = maxi(allowedWordsToEnter, remainingCorrectWords, guessWord, currentDepth + 1, maxDepth, alpha, beta);
+            auto value = maxi(allowedWordsToEnter, remainingCorrectWords, guessWord, currentDepth, maxDepth, alpha, beta);
 
             if (value.m_fitness < bestValue.m_fitness) {
                 bestValue.m_fitness = value.m_fitness;
@@ -190,7 +171,6 @@ Result maxi(std::vector<Word> const& allowedWordsToEnter,
             Fitness alpha,
             Fitness beta) {
     Result bestValue = Result::mini();
-    auto maxFilteredCorrectWords = size_t();
     for (Word const& correctWord : remainingCorrectWords) {
         // create information for the next node
         auto state = stateFromWord(correctWord, guessWord);
@@ -198,14 +178,14 @@ Result maxi(std::vector<Word> const& allowedWordsToEnter,
 
         // create a new list of remaining correct words
         auto value = Result();
+
         if (currentDepth == maxDepth - 1) {
             // we've reached the end, just calculate number of remaining words as the fitness value.
-            value.m_fitness.maxCount = 0;
-            value.m_fitness.depth = currentDepth;
+            value.m_fitness[currentDepth] = 0;
 
             for (Word const& word : remainingCorrectWords) {
                 if (isWordValid(word) && guessWord != word) {
-                    ++value.m_fitness.maxCount;
+                    ++value.m_fitness[currentDepth];
                 }
             }
         } else {
@@ -217,7 +197,7 @@ Result maxi(std::vector<Word> const& allowedWordsToEnter,
                 }
             }
             value = mini(allowedWordsToEnter, filteredWords, currentDepth + 1, maxDepth, alpha, beta);
-            maxFilteredCorrectWords = std::max(maxFilteredCorrectWords, filteredWords.size());
+            value.m_fitness[currentDepth] = filteredWords.size();
         }
 
         if (value.m_fitness > bestValue.m_fitness) {
@@ -230,7 +210,6 @@ Result maxi(std::vector<Word> const& allowedWordsToEnter,
             alpha = std::max(alpha, bestValue.m_fitness);
         }
     }
-    bestValue.m_fitness.numFilteredCorrectWords = maxFilteredCorrectWords;
     return bestValue;
 }
 
@@ -280,6 +259,37 @@ std::vector<Word> readAndFilterDictionary(std::filesystem::path filename) {
     return parseDict(fin);
 }
 
+// Calculates a score for each word, based on letter frequency
+void heuristicSort(std::vector<Word>& words) {
+    auto letterFrequency = AlphabetMap<size_t>();
+    for (auto const& word : words) {
+        for (auto ch : word) {
+            ++letterFrequency[ch];
+        }
+    }
+
+    auto scores = std::vector<std::pair<Word, size_t>>();
+    for (auto const& word : words) {
+        auto hasLetter = AlphabetMap<bool>();
+        auto score = size_t();
+        for (auto ch : word) {
+            if (!hasLetter[ch]) {
+                score += letterFrequency[ch];
+                hasLetter[ch] = true;
+            }
+        }
+        scores.emplace_back(word, score);
+    }
+
+    std::sort(scores.begin(), scores.end(), [](auto const& a, auto const& b) {
+        return a.second < b.second;
+    });
+
+    for (size_t i = 0; i < scores.size(); ++i) {
+        words[i] = scores[i].first;
+    }
+}
+
 } // namespace wordle
 
 int main(int argc, char** argv) {
@@ -316,6 +326,10 @@ by Martin Leitner-Ankerl 2022
     auto allowedWords = wordle::readAndFilterDictionary(prefix + "_allowed.txt");
     auto wordsCorrect = wordle::readAndFilterDictionary(prefix + "_correct.txt");
 
+    wordle::heuristicSort(allowedWords);
+    wordle::heuristicSort(wordsCorrect);
+    std::reverse(allowedWords.begin(), allowedWords.end());
+
     auto validators = std::vector<wordle::IsSingleWordValid>();
     for (int i = 2; i < argc; ++i) {
         auto [word, state] = wordle::parseWordAndState(argv[i]);
@@ -339,9 +353,9 @@ by Martin Leitner-Ankerl 2022
 
     auto alpha = wordle::Fitness::mini();
     auto beta = wordle::Fitness::maxi();
-    // auto beta = wordle::Fitness{2, 4};
     size_t currentDepth = 0;
-    size_t maxDepth = 4;
+    size_t maxDepth = 2;
+
     auto bestResult = wordle::alphabeta::mini(allowedWords, filteredCorrectWords, currentDepth, maxDepth, alpha, beta);
 
     std::cout << bestResult.m_fitness << " " << bestResult.m_guessWord << std::endl;
